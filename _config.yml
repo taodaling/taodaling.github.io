@@ -53,7 +53,7 @@ home:
 blog:
   cc_license: http://creativecommons.org/licenses/by-sa/4.0/ # A link to CC License of your choice.
   cc_license_image: /assets/images/theme/cc-by-sa.png # An image of your CC License. 
-  footer_content: Somewhere to share ...
+  footer_content: I'll come back soon...
 
 disqus:
   shortname: # e.g. yizeng
