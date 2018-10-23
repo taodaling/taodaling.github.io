@@ -27,10 +27,10 @@ title: Taodaling's blog!
 description: "My blog to share"
 keywords: 'jekyll,theme,gem-based,blog'
 author:
-  name:Taodaling
-  job_title:Developer
-  location:China
-  email:taodaling@gmail.com
+  name: Taodaling
+  job_title: Developer
+  location: China
+  email: taodaling@gmail.com
   social_links:
     - name: facebook
       url:
