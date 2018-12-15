@@ -5,13 +5,15 @@ layout: post
 
 - Table
 {:toc}
-# 加密应用
+# 加密理论
 
 ## 对称加密
 
 对称加密时密码学中的一类加密算法。这类算法在加密和解密的时候使用相同的密钥，或是使用两个可以互相推导的密钥。
 
 这种加密方式的特点是密钥必须在私底下确定。
+
+常见的对称加密算法有DES、AES、RC5、RC6等。
 
 ## 非对称加密-公私钥
 
@@ -35,3 +37,89 @@ layout: post
 CA就是解决这种问题的手段。CA全称是Certificate Authority，它是负责管理和签发证书的第三方机构。由于可信的CA较少，因此我们可以保证消费方能持有所有信任CA的公钥（比如你的浏览器可能就内置了CA的公钥）。
 
 这样服务方首先向CA提供自己公钥以及自己的信息，之后CA用自己的私钥对这些信息进行加密，加密的结果称为证书，并将证书提供给服务方。之后服务方向消费方提供证书，由于CA的密钥没有泄露，因此其他恶意者无法篡改证书，并且CA是可信的（可以默认CA不会为恶意用户提供伪造证书），因此消费方可以利用证书中的额外信息判别是否是服务方真实的证书，如果是真实的就采用证书中记录的公钥。
+
+# 实践
+
+## 生成RSA密钥
+
+首先确保自己安装了OpenSSL。
+
+之后输入下面命令：
+
+```sh
+ssh-keygen
+```
+
+接着按提示一步步来。
+
+## RSA密钥加解密
+
+如果想要解密RSA密钥：
+
+```sh
+openssl rsa -in encrypted.key -out raw.key
+```
+
+其中encrypted.key是加密的key而raw.key是解密后的key。
+
+
+
+## 生成CA认证证书
+
+### CSR
+
+证书请求全称Certificate Signing Request，简称CSR。证书请求中包含自己的公钥，生成证书时需要将这个提交给权威的证书颁发机构。
+
+生成CSR的命令:
+
+```sh
+openssl req -new -key server.key -out server.csr
+```
+
+这里`server.key`是你的私钥
+
+### CRT
+
+CRT是certificate的缩写，表示证书的概念。X.509是一种证书格式，对X.509证书来说，认证者一定是CA或是由CA指定的人。一份CA证书包含一些标准字段，包括关于用户或设备及其相应公钥信息。
+
+我们由于这里使用自己认证自己，因此自己将充当CA的角色，首先我们需要一张CA证书，表明我们自己的身份。
+
+```sh
+openssl req -new -x509 -key ca.key -out ca.crt -days 365
+```
+
+这里`ca.key`是CA的私钥。
+
+之后我们需要使用ca证书，ca.key等内容处理之前的`server.csr`，并生成对应的证书`server.crt `: 
+
+```sh
+openssl x509 -req -days 365 -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -sha256 -extfile v3.ext
+```
+
+`v3.ext`中的内容如下：
+
+```properties
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+IP.1 = 192.168.0.2
+IP.2 = 127.0.0.1
+```
+
+其中DNS表示域名，IP表示ip地址。
+
+## 导入CA证书
+
+因为自己认证自己的CA证书是不可信的，因此如果你服务器上使用这个CA证书，并且访问服务器路径，那么浏览器将会提示CA证书不可信。
+
+我们可以直接将CA证书作为可信根证书安装在系统中，之后所有它签署的证书也都是可信的。
+
+### Windows
+
+在Windows上安装CA证书非常简单，只要我们把证书拷到本地，并右键选择安装即可。安装目录选择`受信任的根证书颁发机构`。
+
+要删除CA证书的话，可以先command+r打开运行窗口，之后输入mmc打开微软控制台，文件->添加或删除管理单元中添加证书。之后就可以手动修改了。
