@@ -946,7 +946,7 @@ Spring Data JPA仓库支持三种不同的启动模式：default，deferred，�
 
 #### 创建和删除JPA数据库
 
-默认，JPA的数据库尽在你使用嵌入式数据库的时候会被自动创建。你可以通过`spring.jpa.*`显式配置JPA。比如，要创建表或删除表，你可以像`application.properties`中加入下面行:
+默认，JPA的数据库在你使用嵌入式数据库的时候会被自动创建。你可以通过`spring.jpa.*`显式配置JPA。比如，要创建表或删除表，你可以像`application.properties`中加入下面行:
 
 ```properties
 spring.jpa.hibernate.ddl-auto=create-drop
@@ -996,5 +996,263 @@ Spring Boot提供了`@SpringBootTest`注解，当你需要Spring Boot的特性�
 
 > 如果你是用JUnit4，不要忘了要加上`@RunWith(SpringRunner.class)`到你的测试用例中，否则这个注解将被忽略。如果你使用JUnit5，如果`@SpringBootTest`已经出现，那就没有必要提供等价的`@ExtendWith(SpringExtension)`。
 
-默认情况下，`SpringBootTest`不会启动服务器，你可以使用`SpringBootTest`的`webEnvironment`属性来进一步确定你的测试用例如何执行。
+默认情况下，`SpringBootTest`不会启动服务器，你可以使用`SpringBootTest`的`webEnvironment`属性来进一步定义你的测试用例如何执行。
+
+- MOCK（默认）：加载一个Web`ApplicationContext`并提供一个模拟的Web环境。内嵌的服务器在不会被启动。如果在你的类路径中Web环境不可用，那这个模式会透明回退到创建一个常规的非Web `ApplicationContext`。
+- RANDOM_PORT：加载一个`WebServerApplicationContext`并且提供一个真实的Web环境。内嵌服务器将被启动并监听一个随机端口。
+- DEFINED_PORT：加载一个`WebServerApplicationContext`并且提供一个真实的Web环境。内嵌服务器将被启动并监听一个定义好的端口（来自你的配置文件或取默认值8080）。
+- NONE：利用`SpringApplication`加载一个`ApplicationContext`但是不提供任何Web环境。
+
+> 如果你的测试用例是`@Transactional`，默认所有方法执行完后都会回滚事务。然而，当继而使用`RANDOM_PORT`或`DEFINED_PORT`提供了一个真实的Web环境时，HTTP客户端和服务器在运行于不同的线程中，因此，也对应不同的事务。在服务器的创建的事务都不会被回退。
+
+> 如果你为管理服务器分配一个不同的端口，那么`@SpringBootTest`带有`webEnvironment=WebEnvironment.RANDOM_PORT`时也会为管理服务器分配一个随机端口。
+
+### 利用模拟环境进行测试
+
+默认，`@SpringBootTest`不会启动服务器。如果你希望测试模拟环境的网站终端，你可以额外配置`MockMvc`：
+
+```java
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.web.servlet.MockMvc;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@RunWith(SpringRunner.class)
+@SpringBootTest
+@AutoConfigureMockMvc
+public class MockMvcExampleTests {
+
+	@Autowired
+	private MockMvc mvc;
+
+	@Test
+	public void exampleTest() throws Exception {
+		this.mvc.perform(get("/")).andExpect(status().isOk())
+				.andExpect(content().string("Hello World"));
+	}
+
+}
+```
+
+> 如果你仅关注Web层，而不打算启动一个完全的`ApplicationContext`，考虑使用`@WebMvcTest`。
+
+作为替换，你可以配置一个`WebTestClient`，就像下面所示：
+
+```java
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.web.reactive.server.WebTestClient;
+
+@RunWith(SpringRunner.class)
+@SpringBootTest
+@AutoConfigureWebTestClient
+public class MockWebTestClientExampleTests {
+
+	@Autowired
+	private WebTestClient webClient;
+
+	@Test
+	public void exampleTest() {
+		this.webClient.get().uri("/").exchange().expectStatus().isOk()
+				.expectBody(String.class).isEqualTo("Hello World");
+	}
+
+}
+```
+
+### 测试运行的服务器
+
+如果你需要启动一个完整的服务器，我们推荐你使用随机端口，如果你们使用 `@SpringBootTest(webEnvironment=WebEnvironment.RANDOM_PORT)`，每次执行测试时都会选择一个随机端口。
+
+`@LocalServerPort`注解可以被作为注入实际使用的端口注入到你的测试用例中。测试中需要对服务器调用REST风格请求，可以通过注入`WebTestClient`实现，它会决定执行的服务器的相对路径，并提供了一组特殊的APi用于校验响应。
+
+```java
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.web.reactive.server.WebTestClient;
+
+@RunWith(SpringRunner.class)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+public class RandomPortWebTestClientExampleTests {
+
+	@Autowired
+	private WebTestClient webClient;
+
+	@Test
+	public void exampleTest() {
+		this.webClient.get().uri("/").exchange().expectStatus().isOk()
+				.expectBody(String.class).isEqualTo("Hello World");
+	}
+
+}
+```
+
+上例需要类路径包含`spring-webflux`，如果你不能加入webflux，Spring Boot也提供了`TestRestTemplate`工具包：
+
+```java
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.test.context.junit4.SpringRunner;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@RunWith(SpringRunner.class)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+public class RandomPortTestRestTemplateExampleTests {
+
+	@Autowired
+	private TestRestTemplate restTemplate;
+
+	@Test
+	public void exampleTest() {
+		String body = this.restTemplate.getForObject("/", String.class);
+		assertThat(body).isEqualTo("Hello World");
+	}
+
+}
+```
+
+### 模拟和监控Bean
+
+当执行测试用例，有时候必须模拟应用上下文中的模块。比如，你可能有一些在开发时不可用的远程服务。Mocking在模拟一些很难在真实环境触发的失败时非常有用。
+
+Spring Boot包含了`@MockBean`注解，用于在你的`ApplicationContext`中定义Mockito的模拟对象。你可以使用这个注解新建Bean或替换已存在的Bean定义。这个注解可以直接在测试用例类上使用，可以在测试用例的字段上是由，或者使用在`@Configuration`类或字段上。当使用在字段上时，被创建的的模拟对象也会被注入。在每个测试方法执行完后，模拟的Bean都会被重置。
+
+> 如果你的测试使用了至少一个Spring Boot的测试注册（比如`@SpringBootTest`），这个特性就会被自动启用。要在一个不同的筹划中使用这些特性，必须显式增加监听器，就如下面例子所示：
+>
+> `@TestExecutionListeners(MockitoTestExecutionListener.class)`
+
+下面的样例使用模拟对象替换一个现存的`RemoteService`Bean：
+
+```java
+import org.junit.*;
+import org.junit.runner.*;
+import org.springframework.beans.factory.annotation.*;
+import org.springframework.boot.test.context.*;
+import org.springframework.boot.test.mock.mockito.*;
+import org.springframework.test.context.junit4.*;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.BDDMockito.*;
+
+@RunWith(SpringRunner.class)
+@SpringBootTest
+public class MyTests {
+
+	@MockBean
+	private RemoteService remoteService;
+
+	@Autowired
+	private Reverser reverser;
+
+	@Test
+	public void exampleTest() {
+		// RemoteService has been injected into the reverser bean
+		given(this.remoteService.someCall()).willReturn("mock");
+		String reverse = reverser.reverseSomeCall();
+		assertThat(reverse).isEqualTo("kcom");
+	}
+
+}
+```
+
+另外，你可以使用`@SpyBean`取包装任何现存的Bean。
+
+> 由于Spring的测试框架会为共享相同配置的测试用例，在测试用例之间缓存应用上下文，而`@MockBean`或`@SpyBean`会影响到缓存使用的key，很可能会增加上下文的数量。
+
+> 如果你在打了`@Cacheable`方法中使用了`@SpyBean`来监控一个Bean，方法使用名字来引用参数，你必须要使用`-parameter`参数编译应用。
+
+### 自动配置测试
+
+Spring Boot的自动测试系统做的很好，但是对于测试来说内容可能太多了。仅加载部分的配置来测试应用的切片往往很有用。比如，你可能希望测试Spring MVC控制器正确映射URL，并且你不希望涉及数据库的调用，或者你仅需要发测试JPA实体类，对web层不感兴趣。
+
+`spring-boot-test-autoconfigure`模块包含了数个注解，用于自动化配置这些切片。它们中的每一个都以类似的方式工作，提供了类似`@...Test`注解，加载`ApplicationContext`和一个或更多`@AutoConfigure...`注解，用于自定义自动配置设置。
+
+### 自动配置JPA测试
+
+你可以使用`@DataJpaTest`注解，测试JPA应用。默认，它配置了内存中嵌入数据库，扫描`@Entity`类，并且配置Spring Data JPA仓库。常规`@Component`的Bean不会加载到`ApplicationContext`中。
+
+默认，Data JPA的测试用例时事务性的，并在方法结束后回滚事务。你可以关闭一个方法或整个类中的事务：
+
+```java
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+@RunWith(SpringRunner.class)
+@DataJpaTest
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+public class ExampleNonTransactionalTests {
+
+}
+```
+
+Data JPA测试用例可以自动注入`TestEntityManager`的Bean，它是标准JPA`EntityManager`的专用于测试的替代物。如果你希望在`@DataJpaTest`实例外使用`TestEntityManger`，你也可以使用`@AutoConfigureTestEntityManager`注解。一个`JdbcTemplate`也是可用的，下面的样例展示了如何使用`@DataJpaTest`：
+
+```java
+import org.junit.*;
+import org.junit.runner.*;
+import org.springframework.boot.test.autoconfigure.orm.jpa.*;
+
+import static org.assertj.core.api.Assertions.*;
+
+@RunWith(SpringRunner.class)
+@DataJpaTest
+public class ExampleRepositoryTests {
+
+	@Autowired
+	private TestEntityManager entityManager;
+
+	@Autowired
+	private UserRepository repository;
+
+	@Test
+	public void testExample() throws Exception {
+		this.entityManager.persist(new User("sboot", "1234"));
+		User user = this.repository.findByUsername("sboot");
+		assertThat(user.getUsername()).isEqualTo("sboot");
+		assertThat(user.getVin()).isEqualTo("1234");
+	}
+
+}
+```
+
+由于它们很快且不需要额外的安装，内存中的嵌入式数据库通常在测试时工作得很好。如果你更想针对真实的数据库执行测试用例，你可以使用`@AutoConfigureTestDatabase`注解，就如下面样例所示：
+
+```java
+@RunWith(SpringRunner.class)
+@DataJpaTest
+@AutoConfigureTestDatabase(replace=Replace.NONE)
+public class ExampleRepositoryTests {
+
+	// ...
+
+}
+```
 
