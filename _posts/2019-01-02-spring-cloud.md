@@ -338,3 +338,222 @@ eureka.client.registry-fetch-interval-seconds=30 #清单过期时间
 eureka.server.enable-self-preservation=false #关闭保护机制
 ```
 
+# 客户端负载均衡：Spring Cloud Ribbon
+
+Spring Cloud Ribbon是一个HTTP、TCP客户端负载均衡工具，它基于Netflix Ribbon实现。通过Spring Cloud的封装，让我们轻松将面向服务的REST模板请求转换为负载均衡的服务调用。
+
+## 客户端负载均衡
+
+负载均衡在系统架构中非常重要，因为负载均衡是对系统高可用、分散压力的重要手段。我们通常说的负载均衡都是指服务端负载均衡，分为硬件负载均衡和软件负载均衡。硬件负载均衡主要在服务器节点之间安装专门处理负载均衡设备，软件负载均衡则在服务器上安装一些具有均衡负载功能或模块的软件来完成请求分发工作，比如Nginx。无论是哪种负载均衡方式，其架构均下图所示：
+
+![](https://raw.githubusercontent.com/taodaling/simple-blog/master/assets/images/2019-1-2-spring-cloud/load-balance.png)
+
+## RestTemplate
+
+RestTemplate会使用Ribbon的自动化配置，同时通过配置@LoadBalanced还能开启负载均衡。
+
+## 配置
+
+Ribbon依赖多个接口以及它们的策略实现：
+
+- IClientConfig：Ribbon的客户端配置。
+- IRule：Ribbon的负载均衡策略，默认使用ZonAvoidanceRule实现。
+- IPing：Ribbon的实例检查策略，默认使用NoOpPing实现。
+- ServerList：服务实例清单列表，默认使用ConfigurationBasedServerList实现。
+- ServerListFilter：服务实例清单过滤策略，默认使用ZonPreferenceServerListFilter实现。
+- ILoadBalancer：负载均衡策略，默认使用ZoneAwareLoadBalancer实现。
+
+Ribbon的参数配置有两种方式，全局配置以及客户端配置。
+
+全局配置的格式为`ribbon.<key>=<value>`，而客户端配置为`<client>.ribbon.<key>=<value>`。
+
+要配置Ribbon使用的服务器，我们需要配置`ribbon.listOfServers`属性，比如：
+
+```properties
+ribbon.listOfServers=localhost:8001,localhost:8002
+```
+
+
+
+## 整合Eureka
+
+在Spring Cloud应用中同时引入Spring Cloud Ribbon和Spring Cloud Eureka，将会触发Eureka对Ribbon的自动化配置。这时Ribbon的策略组件将会被替换：
+
+- ServerList：替换为DiscoveryEnabledNIWSServerList的实例，该实例会从Eureka服务器拉取服务清单。
+- IPing：替换为NIWSDiscoveryPing的实例，该实例将实例检查的任务交由注册中心。
+
+# 服务容错保护：Spring Cloud Hystrix
+
+在微服务结构中，服务被拆分为很多单元，单元之间通过注册中心联系起来。由于服务之间的调用是通过远程调用的方式实现的，这样一旦下游服务由于某些原因出现了阻塞和延迟，会同样影响依赖他们的上游服务。如果此时上游服务的请求继续增加，最终就会形成服任务积压以致于自身瘫痪。而这在微服务中非常常见，一个单元出现故障，依赖关系会引起故障的蔓延，最终导致系统瘫痪。为了解决这样的问题，断路器应运而生。
+
+断路器模式源于Martin Fowler的Circuit Breaker一文。而实际中断路器作为一种电路装置，用于在电器短路时，自动切断故障电路，防止过载。而在分布式架构中，断路器的作用也很类似，当某个服务单元故障时，断路器会通过故障监控向调用方及时地返回一个超时报错，而不是长时间等待。这样线程就不会因为调用故障服务而长时间被占用，避免了故障的蔓延。
+
+Spring Cloud Hystrix实现了断路器、线程隔离等服务保护功能。它是基于Netflix的开源框架Hystrix实现的，Hystrix拥有服务降级、服务熔断、线程和信号隔离、请求缓存、请求合并以及服务监控等功能。
+
+## 实例
+
+启动注册中心，并启动两个服务提供者和一个客户端实现了负载均衡的服务消费者。之后关闭一个服务提供者，不断调用服务消费者会发现有网络连接报错。
+
+修改服务消费者代码。
+
+首先修改pom文件，增加下面依赖：
+
+```xml
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-starter-netflix-hystrix</artifactId>
+</dependency>
+```
+
+之后修改我们的入口类：
+
+```java
+@SpringBootApplication
+@EnableDiscoveryClient
+@EnableCircuitBreaker
+@RestController
+public class Application {
+    @Configuration
+    public static class Config {
+        @Bean
+        @LoadBalanced
+        RestTemplate restTemplate() {
+            return new RestTemplate();
+        }
+    }
+
+    @Resource
+    RestTemplate restTemplate;
+
+    @RequestMapping(value = "consume", method = RequestMethod.GET)
+    @HystrixCommand(fallbackMethod = "helloFallback")
+    public String consume() {
+        return restTemplate.getForEntity("http://HELLO-SERVICE/hello", String.class).getBody();
+    }
+
+    public String helloFallback() {
+        return "error";
+    }
+
+    public static void main(String[] args) {
+        new SpringApplicationBuilder(Application.class)
+                .web(WebApplicationType.SERVLET)
+                .run(args);
+    }
+}
+```
+
+重复上面的实验，就会发现这次报错得到的不再是一个连接异常，而是`error`。
+
+除了连接断开外，我们可以改造服务提供端，让它每次提供服务时睡眠0~4秒，由于Hystrix的默认超时时间为2秒，因此我们有一半的几率可以观察到服务超时的现象。
+
+## 服务降级
+
+上上面实例中我们已经见过了通过`@HystrixCommand`实现服务降级的方式。除了注解外，Hystrix也提供了一个抽象类HystrixCommand。通过继承它，我们能对应的实现更高灵活度的服务降级逻辑。HystrixCommand实现了命令模式，观察者模式，我们可以很轻松地在其上进行扩展。
+
+fallback是Hystrix命令执行失败时使用的后备方法，用于实现服务的降级处理逻辑。
+
+在HystrixCommand中的run方法中抛出异常时，除了HystrixBadRequestException外，其它异常都会被视作触发服务降级的条件。除此之外，你可以通过HystrixCommand注解的ignoreExceptions属性配置自己希望不触发服务降级的异常类型。
+
+在通过继承HystrixCommand的方式下，我们可以通过getExcutionException()获得服务降级的原因，而在使用注解的方式下，我们可以为服务降级方法增加Throwable类型的参数，并得到异常信息。
+
+```java
+public String fallback(Throwable e){
+    return e.toString();
+}
+```
+
+## 请求缓存
+
+随着系统用户的增长，在分布式环境下，通常压力来自于对远程服务的调用，这样会造成无法避免的性能损失。同时HTTP相对于其他通信协议没有任何优势，所以很容易成为性能瓶颈。
+
+Hystrix提供了命令缓存的功能，我们可以通过开启缓存来优化性能，缓存的生命周期仅为一次HTTP请求。
+
+要开启缓存非常简单，只需要在实现HystrixCommand时重载getCacheKey方法并返回非空值即可。
+
+要清理缓存，只需要调用HystrixRequestCache.clear()方法即可。
+
+我们也可以通过注解的方式开启缓存，只需要为打了`@HystrixCommand`的方法增加`@CacheResult`即可指定请求返回的结果应该被缓存，而`@CacheRemove`则用于无效化缓存，`@CacheKey`则显式地指定缓存使用的key。
+
+## 请求合并
+
+微服务通过远程请求来相互调用，而远程调用会带来通信消耗和占用连接数。而实际上往往通信发送的内容非常的少，时间消耗在了网络传输上。
+
+Hystrix提供了HystrixCollapser来实现请求的合并，以减少通信消耗和线程占用数目。HystrixCollapser放置在HystrixCommand之前，作为合并请求器，将处于很短时间窗口内的对同一请求的调用打包并批量发送。当然服务提供方也需要提供相应的批量实现接口。
+
+要开启请求合并，有两种方式，一种是继承HystrixCollapser，一种是使用`@HystrixCollapser`注解。
+
+## Hystrix仪表盘
+
+Hystrix Dashboard是Hystrix的仪表盘组件，用于监控Hystrix的各项指标。
+
+要开启仪表盘功能，你需要向你的hystrix项目增加依赖包:
+
+```xml
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
+
+并增加下面两个Bean：
+
+```java
+@Bean
+public HystrixMetricsStreamServlet hystrixMetricsStreamServlet() {
+	return new HystrixMetricsStreamServlet();
+}
+
+@Bean
+public ServletRegistrationBean registrationOfHystrixMetricsStreamServlet(HystrixMetricsStreamServlet hystrixMetricsStreamServlet) {
+	ServletRegistrationBean result = new ServletRegistrationBean();
+	result.setServlet(hystrixMetricsStreamServlet);
+	result.setEnabled(true);
+	result.addUrlMappings("/hystrix.stream");
+	return result;
+}
+```
+
+这时候你访问`http//hystrix-project-host/hystrix.stream`时页面会不断地刷新JSON数据。
+
+之后创建一个hystrix-dashboard项目，向pom加入依赖：
+
+```xml
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-web</artifactId>
+</dependency>
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-starter-netflix-hystrix</artifactId>
+</dependency>
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
+
+之后创建入口类:
+
+```java
+@SpringCloudApplication
+@EnableHystrixDashboard
+public class Application {
+    public static void main(String[] args) {
+        new SpringApplicationBuilder(Application.class)
+                .web(WebApplicationType.SERVLET)
+                .run(args);
+    }
+}
+```
+
+之后访问`http://hystrix-dashboard-project-host/hystrix`，就可以看到hystrix的仪表盘界面。
+
+![](https://raw.githubusercontent.com/taodaling/simple-blog/master/assets/images/2019-1-2-spring-cloud/hystrix-dashboard.png)
+
+在最上面的文本框中填写`http//hystrix-project-host/hystrix.stream`即可看到该应用的hystrix图表。
+
+![](https://raw.githubusercontent.com/taodaling/simple-blog/master/assets/images/2019-1-2-spring-cloud/hystrix-dashboard2.png)
+
+## Turbine集群监控
+
