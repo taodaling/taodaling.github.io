@@ -553,7 +553,65 @@ public class Application {
 
 在最上面的文本框中填写`http//hystrix-project-host/hystrix.stream`即可看到该应用的hystrix图表。
 
-![](https://raw.githubusercontent.com/taodaling/simple-blog/master/assets/images/2019-1-2-spring-cloud/hystrix-dashboard2.png)
+![](https://github.com/taodaling/simple-blog/blob/master/assets/images/2019-1-2-spring-cloud/hystrix-dashboard2.PNG?raw=true)
 
 ## Turbine集群监控
+
+由于Hystrix Dashboard仅能监控一个Hystrix服务的状态，因此我们需要另外一个服务对集群中多个服务的Hystrix指标进行汇总并汇报给Hystrix Dashboard。而Turbine正是干的这个活。
+
+我们首先建立一个新的项目：turbine。
+
+之后修改pom文件，增加下面依赖：
+
+```xml
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-starter-netflix-turbine</artifactId>
+</dependency>
+<dependency>
+	<groupId>org.springframework.boot</groupId>
+	<artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
+
+之后修改application.yml文件：
+
+```yaml
+server:
+  port: 8810
+spring:
+  application:
+    name: turbine
+management:
+  server:
+    port: 8820
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:8760/eureka/
+turbine:
+  app-config: hystrix #需要监控的服务名称
+  cluster-name-expression: new String('default')  #集群名称
+  combine-host-port: true #通过host:port方式区分服务，为false表示同一主机仅被视作一个服务
+  instanceUrlSuffix: hystrix.stream #hystrix收集后缀地址，默认为actuator/hystrix.stream
+```
+
+之后创建入口类：
+
+```java
+@SpringBootApplication
+@EnableDiscoveryClient
+@EnableTurbine
+public class Application {
+    public static void main(String[] args) {
+        new SpringApplicationBuilder(Application.class).run(args);
+    }
+}
+```
+
+之后依次重启你的eureka服务器、hystrix项目，turbine项目、hystrix dashboard项目。
+
+之后用你的hystrix dashboard面板监控`http://localhost:8810/turbine.stream`。
+
+# 声明式服务调用：Spring Cloud Feign
 
