@@ -615,3 +615,9 @@ public class Application {
 
 # 声明式服务调用：Spring Cloud Feign
 
+Spring Cloud Feign是基于Netflix Fiegn实现，整合了Spring Cloud Ribbon和Spring Cloud Hystrix，此外还提供了一种声明式的Web服务客户端定义方式。
+
+在使用Spring Cloud Ribbon时，通常会利用它对RestTemplate的拦截实现对依赖服务的接口调用。而RestTemplate实现了对HTTP请求的封装处理，形成了模板化的调用方法。由于服务会在多处调用，因此我们会实现一些客户端类来包装这些调用，但是客户端一般会是简单的模板式调用，因此Feign在此基础上做了进一步的封装，帮助我们定义和实现依赖服务的定义。在Feign的帮助下，我们只需要创建一个接口并利用注解的方式来配置他它，即可完成对服务提供方的绑定，简化了开发量。Feign支持Feign自带的注解和JAX-RS注解，同时支持了Spring MVC的注解。
+
+## 快速入门
+
