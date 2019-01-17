@@ -207,7 +207,7 @@ myServer:
 	port: 8080
 ```
 
-之后提供下面配置类：
+之后提供下面配置类（注意要提供setter）：
 
 ```java
 @Component
@@ -217,7 +217,15 @@ public class MyServerProperties{
     private String id;
     private String version;
     private int port;
-    ...
+    public void setId(String id){
+        this.id = id;
+    }
+    public void setVersion(String version){
+        this.version = version;
+    }
+    public void setPort(int port){
+        this.port = port;
+    }
 }
 ```
 
@@ -227,7 +235,7 @@ public class MyServerProperties{
 @Configuration
 public class BeanConfig{
     @Bean
-    public MyServer myServer(@Autowire MyServerProperties properties){
+    public MyServer myServer(@Autowired MyServerProperties properties){
         return MyServer
             .newBuilder()
             .id(properties.getId())
