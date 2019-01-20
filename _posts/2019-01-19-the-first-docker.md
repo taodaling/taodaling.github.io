@@ -231,7 +231,15 @@ docker stop命令会向Docker容器进程发送SIGTERM信号，如果想要快�
 docker kill daemon_dave
 ```
 
+## 自动重启容器
 
+可以增加--restart标记，让docker容器因错误而停止运行时自动重启。docker会检查容器的退出代码，并依据此决定是否要重启容器。默认情况下docker不会重启容器。
+
+```sh
+docker run --restart always --name daemon_restart -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
+```
+
+在上面这个例子中，--restart被设置为always，无论容器的退出代码实是什么，docker都会自动重启容器。除了always外，可选的值还有on-failure，只有当容器的退出代码非0时才会自动重启。同时on-failure还支持最大重启次数。
 
 # 配置
 
