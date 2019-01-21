@@ -429,7 +429,7 @@ public class MyImportBeanDefinitionRegistrar implements ImportBeanDefinitionRegi
         ClassPathBeanDefinitionScanner scanner = new ClassPathBeanDefinitionScanner(registry, false) {
             @Override
             protected boolean isCandidateComponent(AnnotatedBeanDefinition beanDefinition) {
-                return true;
+                return beanDefinition.getMetadata().isInterface();
             }
 
             @Override
