@@ -30,9 +30,33 @@ Docker守护进程会监听/var/run/docker.sock这个Unix套接字文件，来�
 
 镜像是Docker世界的基石，用户基于镜像来运行自己的容器。可以把镜像当做容器的源代码，有着体积小的优点。
 
+Docker镜像是由文件系统叠加而成，最底层是一个引导文件系统——bootfs，但是当一个容器启动后，容器会被移到内存中，而引导文件系统则会被卸载，来节省内存。
+
+在传统的Linux引导过程中，root文件系统最先会以只读的方式加载，当引导结束并完成了完整性检查后，它才会切换为读写模式。但是在Docker中，root文件系统永远是只读状态，并且Docker利用联合加载技术会在root文件系统层上加载更多的只读文件系统。联合加载指的是同时加载多个文件系统，但是在应用的视角只能看到一个文件系统。
+
+Docker将这样的文件系统称为镜像，一个镜像置于另外一个镜像的顶部，位于下面的镜像称为父镜像（parent image），而最底部的镜像称为基础镜像（base image）。当从一个镜像启动容器时，Docker会在该镜像的最顶层加载一个读写文件系统，而容器中的程序就是在 这个读写层中执行的。
+
+下面是一个分层的文件系统的示例，从上之下，对应从镜像底部到顶部。
+
+- 内核
+- 容器组、命名空间、设备映射
+- 引导文件系统
+- Ubuntu
+- emacs
+- Apache
+- 可写容器
+
+在Docker第一次启动一个容器时，初始的写入层是空的，当文件系统发生改变，这些改变都会应用在这一层。比如修改一个文件，文件会从只读层复制到读写层，之后的所有读取操作和写入操作都作用于读写层中的文件副本上（非常类似于缓存系统）。
+
+这种机制一般被称为写时复制（copy on write）。在Docker中每个只读镜像层都是不变的。在创建一个新容器时，Docker会构建出一个镜像栈，并在栈顶添加一个读写层。这个读写层加上下面额镜像层以及一些配置数据，构成了一个完整的容器。
+
 ## Registry
 
 Docker利用Registry来保存用户构建的镜像。Registry分为公共和私有两种，Docker公司运营的Docker Hub是公共Registry。
+
+Docker提供了标签，每个镜像都带有一个标签，比如12.04、12.10、latest等。标签可以用于标识仓库中一个镜像的不同版本，要指定仓库中某一个特定版本的镜像，我们需要使用`镜像名:标签`的方式引用镜像（如果不指定标签，那么默认标签为latest）。
+
+Docker Hub中有两种类型的仓库，用户仓库和顶层仓库，用户仓库中的镜像是由Docker用户创建的，而顶层仓库则是Docker内部人员管理的。用户仓库的命名由用户名和仓库名组成，比如`jamtur01/puppet`表示用户名为jamtur01而仓库名为puppet。而顶层仓库仅包含仓库名，比如`ubuntu`。使用用户仓库中的镜像需要自行承担风险。
 
 ## 容器
 
@@ -241,6 +265,77 @@ docker run --restart always --name daemon_restart -d ubuntu /bin/sh -c "while tr
 
 在上面这个例子中，--restart被设置为always，无论容器的退出代码实是什么，docker都会自动重启容器。除了always外，可选的值还有on-failure，只有当容器的退出代码非0时才会自动重启。同时on-failure还支持最大重启次数。
 
+## 深入容器
+
+尽管通过ps命令可以获取容器的信息，但是要获得更多信息，你需要使用inspect命令。
+
+```sh
+docker inspect daemon_dave
+```
+
+## 删除容器
+
+```sh
+docker rm daemon_dave #移除容器
+```
+
+rm命令用于删除停止的容器，如果要删除运行中的容器，需要加上-f参数。
+
+```sh
+docker rm `docker ps -a -q` #删除所有的停止容器
+```
+
+docker ps -a -q会返回所有容器的名称，因此，你可以利用上面的命令删除所有的停止容器。
+
+## 列出镜像
+
+利用docker images命令可以列出本地存储的Docker镜像。
+
+```sh
+docker images #列出镜像列表
+docker images fedora #仅查看fedora镜像
+```
+
+本地的镜像都保存在Docker宿主机的/var/lib/docker目录下。
+
+## 拉取镜像
+
+我们可以利用docker pull命令从Registry中拉取镜像。
+
+```sh
+docker pull ubuntu:latest
+```
+
+## 查找镜像
+
+利用docker search命令可以查找所有Docker Hub上公共的可用镜像。
+
+```sh
+docker search puppet
+```
+
+## 创建Docker Hub账号
+
+我们可以在[https://hub.docker.com/signup](https://hub.docker.com/signup)上创建自己的账号。之后在本地登录Docker Hub：
+
+```sh
+docker login
+```
+
+对应的，如果你想要登出账号，可以使用docker logout命令。
+
+```sh
+docker logout
+```
+
+## 构建镜像
+
+要构建自定义的镜像，可以使用docker build命令从Dockerfile文件中构建镜像。
+
+一般来说，我们不会完全重新创建一个镜像，而是基于一个已有的镜像做一些修改后构建出自己的镜像。
+
+
+
 # 配置
 
 ## 守护进程
@@ -280,8 +375,6 @@ docker deamon -D
 已调试模式启动守护进程，这样会输出额外的冗余信息。
 
 可以修改/usr/lib/systemd/system/docker.service或/etc/sysconfig/docker文件修改ExecStart项来永久变更是否默认开启调试模式。
-
-
 
 
 
