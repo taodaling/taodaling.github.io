@@ -335,7 +335,7 @@ docker logout
 一般来说，我们不会完全重新创建一个镜像，而是基于一个已有的镜像做一些修改后构建出自己的镜像。
 
 ```sh
-docker run -i -t--name custom_ubuntu ubuntu /bin/bash
+docker run -i -t --name custom_ubuntu ubuntu /bin/bash
 ```
 
 进入shell后，输入
@@ -367,7 +367,9 @@ docker commit -m "A customized image" -a "taodaling" custom_ubuntu taoodaling/cu
 在使用build之前，需要提供Dockerfile。
 
 ```sh
-
+mkdir static_web
+cd static_web
+touch Dockerfile
 ```
 
 我们创建了一个目录static_web，这个目录就是我们的构建环境，Docker称这个环境为上下文（context）。Docker在构建镜像时会将上下文的文件和目录上传到Docker守护进程。
@@ -418,10 +420,26 @@ docker build -t "taodaling/static_web:v1" .
 上面的使用./Dockerfile构建镜像。你也可以使用GIt仓库中的Dockerfile。
 
 ```sh
-docker build -t="taodaling/static_web:v1" git@github.com:jamtur01/docker-static_web
+docker build -t "taodaling/static_web:v1" git@github.com:jamtur01/docker-static_web
 ```
 
+如果在上下文根目录存在以`.dockerignore`命名的文件的话，那么该文件的每一行都指定一个过滤模式，类似于`.gitignore`文件。该文件用来设置哪些文件不会被当做构建上下文的一部分，匹配规则采用的是Go语言的filepath。
 
+## 指令失败情况下的调试
+
+我们修改上面Dockerfile中安装nginx的指令，令其失败。
+
+```dockerfile
+RUN apt-get update && apt-get install -y ngin
+```
+
+之后构建镜像。
+
+```sh
+docker build -t "taodaling/static_web:failure" .
+```
+
+docker构建过程中会发生报错，利用docker ps命令可以看到最后一次执行的容器，之后用inspect命令得到容器的镜像名，利用镜像重建一个容器，就可以手动进行调试。
 
 # 配置
 
