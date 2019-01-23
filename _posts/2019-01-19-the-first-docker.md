@@ -328,11 +328,98 @@ docker login
 docker logout
 ```
 
-## 构建镜像
+## 使用docker commit构建镜像
+
+当我们创建一个容器并在容器中做出修改后，可以利用docker命令将修改的部分提交为一个新镜像。
+
+一般来说，我们不会完全重新创建一个镜像，而是基于一个已有的镜像做一些修改后构建出自己的镜像。
+
+```sh
+docker run -i -t--name custom_ubuntu ubuntu /bin/bash
+```
+
+进入shell后，输入
+
+```sh
+apt-get -yqq update
+apt-get -y install apache2
+exit
+```
+
+退出shell后输入
+
+```sh
+docker commit custom_ubuntu taodaling/custom_ubuntu
+```
+
+commit将修改后的容器的顶层（读写层）抽出作为一个新的镜像，并提交到本地仓库。
+
+```sh
+docker commit -m "A customized image" -a "taodaling" custom_ubuntu taoodaling/custom_ubuntu:webserver
+```
+
+## 使用docker build构建镜像
 
 要构建自定义的镜像，可以使用docker build命令从Dockerfile文件中构建镜像。
 
-一般来说，我们不会完全重新创建一个镜像，而是基于一个已有的镜像做一些修改后构建出自己的镜像。
+推荐使用build命令替代commit命令，因为前者构建镜像具备更好的可重复性、透明性以及幂等性。
+
+在使用build之前，需要提供Dockerfile。
+
+```sh
+
+```
+
+我们创建了一个目录static_web，这个目录就是我们的构建环境，Docker称这个环境为上下文（context）。Docker在构建镜像时会将上下文的文件和目录上传到Docker守护进程。
+
+```dockerfile
+# Version: 0.0.1
+FROM ubuntu:latest
+MAINTAINER taodaling "taodaling@gmail.com"
+RUN apt-get update && apt-get install -y nginx
+RUN echo 'Hi, I am in your container' > /usr/share/nginx/html/index.html
+EXPOSE 80
+```
+
+ Dockerfile由一系列指令和参数组成。每条指令，如FROM，都必须为大写字母，后面跟随参数。Dockerfile中的指令会按顺序从上向下执行。
+
+每条Dockerfile中的指令都会创建一个新的镜像层并对镜像进行提交。
+
+Docker会按照下面流程执行Dockerfile中的指令：
+
+- Docker从父镜像运行一个容器
+- 执行一条指令，对容器做出修改
+- 执行docker commit，提交一个新的镜像层
+- Docker基于刚提交的镜像运行一个新容器
+- 执行Dockerfile中的下一条指令，直到所有指令执行完成。
+
+如果Docker在执行某条指令时失败，那么用户将得到一个可以使用的镜像，用户可以利用该镜像和失败指令查找失败原因。
+
+Dockerfile支持注释，以#开头的行都会被视作注释。
+
+每个Dockerfile的第一条指令必须是FROM，FROM指令指定一个已存的镜像，并将其作为该条指令生成的镜像，后续的修改将基于这个镜像做出修改。
+
+MAINTAINER指令告诉Docker生成镜像的作者是谁，以及作者的邮件地址。这有助于标识镜像的所有者。
+
+之后的两条RUN指令。RUN指令会在生成镜像上运行指定的命令。默认情况下，RUN指令会在shell里使用命令包装器/bin/sh -c来执行，如果是在一个不支持shell的平台上运行或者不希望在shell运行，也可以使用exec格式的RUN指令， 此时我们用一个数组来表示命令和参数。
+
+```sh
+RUN ["apt-get", "install", "-y", "nginx"]
+```
+
+EXPOSE指令告诉Docker容器内的应用程序将会使用容器的指定端口。这并不意味着可以自动访问任意容器运行中服务的端口，出于安全的考虑，Docker不会自动打开该端口，而需要用户在使用docker run运行容器时来指定需要打开哪些端口。EXPOSE命令可以出现多次以公开多个端口。
+
+下面我们用这个Dockfile构建镜像。
+
+```sh
+docker build -t "taodaling/static_web:v1" .
+```
+
+上面的使用./Dockerfile构建镜像。你也可以使用GIt仓库中的Dockerfile。
+
+```sh
+docker build -t="taodaling/static_web:v1" git@github.com:jamtur01/docker-static_web
+```
 
 
 
@@ -376,5 +463,52 @@ docker deamon -D
 
 可以修改/usr/lib/systemd/system/docker.service或/etc/sysconfig/docker文件修改ExecStart项来永久变更是否默认开启调试模式。
 
+### 代理
 
+Docker守护进程使用HTTP_PROXY和HTTPS_PROXY以及NO_PROXY环境变量来配置代理。配置的流程如下：
+
+```sh
+mkdir -p /etc/systemd/system/docker.service.d
+```
+
+之后创建文件/etc/systemd/system/docker.service.d/http-proxy.conf并加入以下内容：
+
+```properties
+[Service]
+Environment="HTTP_PROXY=http://proxy.example.com:80/"
+```
+
+如果使用的是HTTPS代理，则创建的文件则应该是https-proxy.conf，内容格式为
+
+```sh
+[Service]
+Environment="HTTPS_PROXY=https://proxy.example.com:443/"
+```
+
+ 如果你希望一些registry不走HTTP代理，比如你自己搭建了一个私有registry。那么你需要修改http-proxy.conf文件：
+
+```properties
+[Service]
+Environment="HTTP_PROXY=http://proxy.example.com:80/" "NO_PROXY=localhost,127.0.0.1,docker-registry.somecorporation.com"
+```
+
+当然如果你希望不走的是HTTPS代理，则修改https-proxy.conf：
+
+```properties
+[Service]    
+Environment="HTTPS_PROXY=https://proxy.example.com:443/" "NO_PROXY=localhost,127.0.0.1,docker-registry.somecorporation.com"
+```
+
+在修改完成后，让你的配置文件即刻起效：
+
+```sh
+systemctl daemon-reload
+systemctl restart docker
+```
+
+之后确认修改是否起效：
+
+```sh
+systemctl show --property=Environment docker
+```
 
