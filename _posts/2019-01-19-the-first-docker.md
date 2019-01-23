@@ -441,6 +441,92 @@ docker build -t "taodaling/static_web:failure" .
 
 docker构建过程中会发生报错，利用docker ps命令可以看到最后一次执行的容器，之后用inspect命令得到容器的镜像名，利用镜像重建一个容器，就可以手动进行调试。
 
+## Dockerfile和构建缓存
+
+由于每一步的构建过程都会将结果提交为镜像，Docker会将之前构建时创建的镜像当做缓存，并直接跳过。这样就可以不必创建许多中间镜像，从而节省时间。可以认为Docker会从Dockerfile第一条修改的指令开始真正创建镜像，而之前的会复用缓存镜像。
+
+然而，有的时候我们必须禁用缓存，比如我们希望每次都重新执行apt-get update命令，以获得最新的更新。为了禁用缓存，可以在使用build命令时使用--no-cache标志。
+
+```
+docker build --no-cache -t "taodaling/static_web:no_cache .
+```
+
+## 基于构建缓存的Dockerfile
+
+构建缓存带来的好处之一是，我们可以实现简单的Dockerfile，在需要重置缓存的指令之前加上一条修改时间戳。
+
+```dockerfile
+FROM ubuntu:14.04
+MAINTAINER James Turnbull "james@example.com"
+ENV REFRESHED_AT 2014-07-01
+RUN apt-get -qq update
+```
+
+ENV指令用于设置环境变量REFRESHED_AT值为2014-07-01。这个环境变量用于表明该镜像模板的最后更新时间。之后如果你想刷新一个构建，只需要修改时间戳（在这里是环境变量REFRESHED_AT环境变量），之后的命令将不会再复用缓存。
+
+## 查看镜像的构建过程
+
+要查看一个镜像的构建过程，可以使用history命令。
+
+```sh
+docker history taodaling/static_web
+```
+
+## 从新镜像上启动容器
+
+首先启动我们刚才构建的容器。
+
+```
+docker run -d -p 80 --name static_web taodaling/static_web \
+nginx -g "daemon off;"
+```
+
+这里我们以守护式容器的方式创建了一个新的容器，同时我们在容器中执行了命令nginx -g "daemon off;"，这将以前台运行的方式启动Nginx。
+
+这里我们使用了一个新的-p标记，该标记用于控制Docker在运行时应该公开哪些网络端口给宿主机。Docker可以通过两种方式在宿主机上分配端口：
+
+- Docker可以在宿主机上随机选择一个位于32768~61000的一个较大的端口号来映射到容器的80端口上。
+- 可以指定宿主机的一个具体端口号来映射到容器的80端口上。
+
+上面的命令，我们是采用了第一种方式，绑定到了一个随机的宿主机端口上。利用docker ps命令可以看到具体的端口绑定关系，在我的机器上输出如下：
+
+```sh
+CONTAINER ID        IMAGE                           COMMAND                  CREATED             STATUS              PORTS                   NAMES
+866c768546ba        taodaling/static_web   "nginx -g 'daemon of…"   5 minutes ago       Up 5 minutes        0.0.0.0:32769->80/tcp   static_web
+```
+
+除了用docker ps命令外，docker port也可以帮助我们查看容器的端口映射情况。
+
+```sh
+docker port static_web #查看static_web的所有端口映射关系
+docker port static_web 80 #仅查看static_web的80端口映射关系
+```
+
+要显式地配置映射关系，可以通过`-p 宿主机端口:容器端口`的方式指定。
+
+```sh
+docker run -d -p 8080:80 --name static_web taodaling/static_web \
+nginx -g "daemon off;"
+```
+
+我们还可以将端口绑定在特定的IP地址上，用法为`-p 宿主机IP地址:宿主机端口:容器端口`。
+
+```sh
+docker run -d -p 127.0.0.1:8080:80 --name static_web taodaling/static_web \
+nginx -g "daemon off;"
+```
+
+上面我们指定了IP地址为127.0.0.1，这样只有宿主机可以访问这个端口。
+
+Docker还提供了一个更加便捷的-P参数，用于公开在Dockerfile中通过EXPOSE指令公开的所有端口，将其中每一个以随机的方式绑定到宿主机的端口上。
+
+```sh
+docker run -d -P --name static_web taodaling/static_web \
+nginx -g "daemon off;"
+```
+
+
+
 # 配置
 
 ## 守护进程
