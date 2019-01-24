@@ -525,7 +525,66 @@ docker run -d -P --name static_web taodaling/static_web \
 nginx -g "daemon off;"
 ```
 
+你也可以显式指定端口使用的是TCP还是UDP协议，用法为`[[ip:][宿主机端口]:][容器端口][/tcp|/udp]`。
 
+```sh
+docker run -d -p 127.0.0.1:8080:80/tcp --name static_web taodaling/static_web \
+nginx -g "daemon off;"
+```
+
+有了端口号后，你就可以使用容器ip和端口访问服务，也可以通过本地ip和绑定的本地端口访问服务。
+
+## 推送镜像到Docker Hub
+
+镜像构建完成后，我们可以将它上传到Docker Hub上去，这样其他人就可以使用这个镜像了。
+
+docker push命令就可以用于将镜像推送到Docker Hub。
+
+```sh
+docker push taodaling/static_web
+```
+
+## 自动构建
+
+除了从命令行构建和推送镜像外，Docker Hub还允许我们定义自动构建。我们只需要将GitHub或BitBucket中含有Dockerfile的仓库连接到Docker Hub即可。向这个代码仓库推送代码时，将会触发一次镜像构建过程并创建一个新的镜像。
+
+## 删除镜像
+
+如果不再需要一个镜像了，也可以利用docker rmi将其删除。删除镜像的同时会删除构建镜像过程中创建的中间镜像层。
+
+```sh
+docker rmi taodaling/static_web
+```
+
+rmi仅会删除本地的镜像缓存，而不会推送到远程仓库。
+
+## 建立自己的Docker Registry
+
+如果你想要免费建立自己的Docker Registry，你可以利用Docker公司开源的Docker Registry。
+
+从Docker容器启动一个Registry服务非常简单。
+
+```sh
+docker run -p 5000:5000 registry
+```
+
+要向我们的Registry推送镜像，首先需要打上标记。首先我们要获得镜像的ID。
+
+```sh
+docker tag 22d47c8cb6e5 localhost:5000/taodaling/static_Web
+```
+
+之后就可以向你的Registry推送。
+
+```sh
+docker push localhost:5000/taodaling/static_Web
+```
+
+同样，要运行容器，可以使用下面命令。
+
+```sh
+docker run localhost:5000/taodaling/static_Web
+```
 
 # 配置
 
@@ -616,3 +675,219 @@ systemctl restart docker
 systemctl show --property=Environment docker
 ```
 
+## Dockerfile
+
+### CMD
+
+CMD指令用于指定一个容器启动时要运行的命令。这有些类似于RUN指令，但是RUN指令是在构建的时候执行的命令，而CMD是容器启动后运行的命令。
+
+与RUN命令一样，CMD命令有两种格式，一种是在命令前加上/bin/bash -c后执行，一种是exec格式。
+
+```sh
+CMD ["/bin/bash", "-l"] # exec格式，推荐
+CMD /bin/bash -l # /bin/bash -c执行
+```
+
+当你没有在docker run命令中显示指定容器启动后执行的命令的话，CMD指令才会被执行。
+
+一个Dockerfile中假如有多条CMD指令，那么仅最后一条会被保留。如果你确实需要执行多条命令，可以用RUN命令将这些命令写入到脚本中。之后CMD命令直接执行脚本就可以了。
+
+### ENTRYPOINT
+
+ENTRYPOINT指令类似于CMD指令，由于CMD指令会被覆盖。ENTRYPOINT与CMD的区别在于，CMD指令会被覆盖，而ENTRYPOINT指令不会被覆盖，但是它会接收你在使用docker run命令时传递的额外参数作为ENTRYPOINT的参数。
+
+```dockerfile
+FROM ubuntu
+ENTRYPOINT ["echo"]
+```
+
+之后构建镜像。
+
+```sh
+docker build -t taodaling/test_entrypoint .
+```
+
+之后我们启动容器。
+
+```sh
+docker run taodaling/test_entrypoint "Hello, World"
+```
+
+和CMD指令一样，只能存在一个ENTRYPOINT指令。但是CMD指令和ENTRYPOINT可以共存，利用CMD指令我们可以为ENTRYPOINT指令提供默认参数。
+
+```dockerfile
+FROM ubuntu
+ENTRYPOINT ["echo"]
+CMD ["default bahavior"]
+```
+
+如果确实必要，你可以通过docker run的--entrypoint选项覆盖ENTRYPOINT命令。
+
+```sh
+docker run --entrypoint /bin/bash -i -t taodaling/test_entrypoint
+```
+
+### WORKDIR
+
+WORKDIR指令用来容器创建后，设置工作目录（类似于CD命令）。之后ENTRYPOINT和CMD指令都会在这个目录下执行。除此之外WORKDIR还可以为其它指令设置工作目录，比如在构建时为RUN设置工作目录。
+
+```dockerfile
+FROM ubuntu
+WORKDIR /var/log
+RUN ["mkdir", "-p", "child"]
+WORKDIR ./child
+ENTRYPOINT ["pwd"]
+```
+
+可以通过-w标志在运行覆盖工作目录。
+
+```sh
+docker run -w / taodaling/test_workdir
+```
+
+### ENV
+
+ENV指令用于在镜像构建过程中设置环境变量。这个环境变量对后面执行的所有命令都有效，包括RUN、CMD、ENTRYPOINT等。
+
+```dockerfile
+FROM ubuntu
+ENV RVM_PATH /home/rvm/
+RUN gem install unicorn
+```
+
+一个ENV指令可以一次性设置多个环境变量。
+
+```dockerfile
+FROM ubuntu
+ENV RVM_PATH="/home/rvm/" RVM_ARCHFLAGS="-arch i386"
+RUN mkdir -p RVM_PATH
+CMD echo $RVM_ARCHFLAGS
+```
+
+也可以在使用docker run的时候利用-e选项传递环境变量，这些变量仅在容器的生命周期中有效。
+
+```sh
+docker run -e RVM_ARCHFLAGS="-arch unknown" taodaling/test_env
+```
+
+### USER
+
+USER指令用于指定镜像由谁去运行。
+
+```dockerfile
+USER nginx
+```
+
+基于该镜像启动的容器会以nginx用户的身份来运行。我们可以指定用户名或UID、组或GID，格式为`USER [UID|用户名][:[GID|组名]]`。
+
+```dockerfile
+USER user
+USER user:group
+USER uid:gid
+```
+
+你也可以在执行docker run时通过-u选项来指定登录用户。如果没有指定过用户，则默认使用root。
+
+### VOLUME
+
+VOLUME指令用于向容器添加卷，一个卷可以存在于一个或多个容器内的特定目录。这个目录可以向他们提供数据共享和持久化的功能。
+
+- 卷支持在容器之间共享
+- 对卷的修改是立即生效的
+- 对卷的修改不会对更新镜像产生影响
+- 卷会一直存在
+
+卷可以让我们将文件和目录添加到镜像中，但是不提交到镜像中。
+
+```docker
+VOLUME ["/opt/project", "/data"]
+```
+
+这条指令会为基于此镜像创建的任何容器创建名为/opt/project和/data的挂载点。
+
+### ADD
+
+ADD指令用来将构建环境下的文件和目录复制到镜像中。但是不能指定非构建环境下的文件，因为构建上下文中的文件会直接上传给Docker守护进程，而Docker守护进程无法访问到宿主机中的其它文件
+
+```dockerfile
+ADD software.lic /opt/application/software.lic #将构建上下文中的softlic文件复制到/opt/application/software.lic
+```
+
+目的地如果以/结尾，那么docker认为是复制到该目录下，否则认为是覆盖该文件。
+
+源文件除了可以是构建上下文的文件外，还可以是URL。
+
+```dockerfile
+ADD http://wordpress.org/latest.zip /root/wordpress.zip
+```
+
+值得一提的是，ADD在处理归档文件时，如果目的地是目录，docker会自动将文档解压。如果存在文件冲突，则保留原来目的目录下的文件。
+
+如果目的位置不存在的话，Docker还会为我们自动创建路径。而新建的文件和目录的模式为0755，且UID和GID均为0。
+
+### COPY
+
+COPY和ADD指令类似，与ADD不同的是，COPY仅会复制文件，而不会执行解压的工作。
+
+```dockerfile
+COPY conf.d/ /etc/apache2/
+```
+
+上面的命令会把conf.d目录中的所有文件和目录复制到/etc/apache2/目录下。
+
+文件的源路径必须是一个与当前构建环境相对的文件的或者目录，且处于构建目录下，而任何创建的文件或目录的UID和GID都是0。
+
+### LABEL
+
+LABEL指令用于为Docker镜像添加元数据，元数据以键值对的形式存放。
+
+```dockerfile
+LABEL version="1.0"
+LABEL location="New York" type="Data Center" role="Web Server"
+```
+
+推荐所有的元数据放在一条LABEL命令中，这样可以减少需要创建的镜像层数。
+
+要查看标签信息，可以使用docker inspect命令。
+
+### STOPSIGNAL
+
+STOPSIGNAL指令用于设置停止容器时发送的系统调用信号。这个信号必须是内核系统调用表中合法的数，比如9，或者SIGNAME格式中的信号名称，如SIGKILL。
+
+### ARG
+
+ARG指令用来定义可以在构建时使用的变量，我们只需要在构建时使用--build-arg标志即可。用户在构建时只能指定Dockerfile文件中定义过的参数。
+
+```dockerfile
+ARG build #不带默认值
+ARG webapp_user=user #带默认值
+```
+
+当构建时没有指定参数值，那么就会使用默认值。
+
+```dockerfile
+docker build --build-arg build=1234 -t jamtur01/webapp .
+```
+
+docker预定义了一组ARG变量，因此你可以不用重复声明。
+
+- HTTP_PROXY
+- http_proxy
+- HTTPS_PROXY
+- https_proxy
+- FTP_PROXY
+- ftp_proxy
+- NO_PROXY
+- no_proxy
+
+### ONBUILD
+
+ONBUILD指令能为镜像添加触发器，当一个镜像被用做其他镜像的父亲镜像进行构建时，该镜像的触发器将会被执行。
+
+触发器会在构建过程中插入新指令，我们可以认为这些指令是紧跟在FROM之后执行的。触发器可以时任何构建指令，但不包括FROM、MAINTAINER、ONBUILD。
+
+```dockerfile
+ONBUILD ENV relation="I'm son of x"
+```
+
+ONBUILD命令不会被继承，因此一个镜像在孙子镜像构建时并不会被执行。
