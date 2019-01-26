@@ -481,7 +481,7 @@ docker run -d -p 80 --name static_web taodaling/static_web \
 nginx -g "daemon off;"
 ```
 
-这里我们以守护式容器的方式创建了一个新的容器，同时我们在容器中执行了命令nginx -g "daemon off;"，这将以前台运行的方式启动Nginx。
+这里我们以守护式容器的方式创建了一个新的容器，同时我们在容器中执行了命令nginx -g "daemon off;"，这将以前台运行的方式启动Nginx。由于Docker容器会在命令执行完成后直接进入停止状态，如果以后台模式运行，那么启动nginx的命令会直接退出，这会导致Docker容器停止。
 
 这里我们使用了一个新的-p标记，该标记用于控制Docker在运行时应该公开哪些网络端口给宿主机。Docker可以通过两种方式在宿主机上分配端口：
 
@@ -585,6 +585,243 @@ docker push localhost:5000/taodaling/static_Web
 ```sh
 docker run localhost:5000/taodaling/static_Web
 ```
+
+## 构建网站
+
+首先我们先创建必要的目录和文件。
+
+```sh
+mkdir sample && cd sample
+mkdir nginx && cd nginx
+wget https://raw.githubusercontent.com/jamtur01/dockerbook-code/master/code/5/sample/nginx/global.conf
+wget https://raw.githubusercontent.com/jamtur01/dockerbook-code/master/code/5/sample/nginx/nginx.conf
+```
+
+之后在sample目录下创建Dockerfile文件。
+
+```dockerfile
+FROM ubuntu
+ENV REFRESHED_AT 2014-06-01
+RUN apt-get -yqq update && apt-get -yqq install nginx
+RUN mkdir -p /var/www/html/website
+ADD nginx/global.conf /etc/nginx/conf.d/
+ADD nginx/nginx.conf /etc/nginx/nginx.conf
+EXPOSE 80
+```
+
+之后构建镜像。
+
+```sh
+docker build -t taodaling/nginx .
+```
+
+之后在sample目录下创建website目录并执行下面命令。
+
+```sh
+mkdir website && cd website
+wget https://raw.githubusercontent.com/jamtur01/dockerbook-code/master/code/5/sample/website/index.html
+```
+
+之后启动我们的容器。
+
+```sh
+docker run -d -p 80:80 --name website -v $PWD/website:/var/www/html/website taodaling/nginx nginx
+```
+
+这里使用了一个新的选项`-v 宿主机文件:容器文件`，将宿主机中的文件作为卷挂载到容器中。 如果容器目录不存在会自动创建。
+
+如果你希望卷只允许读的话，你可以利用`-v 宿主机文件:容器文件:[ro|rw]`，ro表示read only，rw表示read write。
+
+```sh
+docker run -d -p 80:80 --name website -v $PWD/website:/var/www/html/website:ro taodaling/nginx nginx
+```
+
+卷在Docker中非常重要，卷是一个或多个容器内被选定的目录，可以绕过联合文件系统，为Docker提供持久数据或者共享数据。当提交或者创建镜像时，卷不被包含在镜像中。即使容器停止了，卷里的内容依旧会保留在宿主机的目录下。
+
+之后访问`https://宿主机ip:80`即可查看首页。
+
+## 修改网站
+
+接下来我们修改宿主机的website/index.html文件。
+
+```html
+This is a test website for Docker
+```
+
+之后刷新首页，可以看到修改生效了。
+
+## 构建Sinatra应用
+
+Sinatra是一个基于Ruby的Web应用框架。
+
+```sh
+mkdir sinatra && cd sinatra
+```
+
+之后编辑Dockerfile文件。
+
+```dockerfile
+FROM ubuntu
+ENV REFRESHED_AT 2014-06-01
+RUN apt-get update -yqq && apt-get -yqq install ruby ruby-dev build-essential redis-tools
+RUN gem install --no-rdoc --no-ri sinatra json redis
+RUN mkdir -p /opt/webapp
+EXPOSE 4567
+CMD ["/opt/webapp/bin/webapp"]
+```
+
+之后构建镜像。
+
+```sh
+docker build -t taodaling/sinatra .
+```
+
+接下来下载代码。
+
+```sh
+git clone https://github.com/turnbullpress/dockerbook-code.git
+```
+
+之后我们要保证webapp/bin/webapp这个文件可以执行。
+
+```sh
+chmod +x webapp/bin/webapp
+```
+
+之后我们启动容器。
+
+```sh
+docker run -d -p 4567 --name webapp -v $PWD/webapp:/opt/webapp taodaling/sinatra
+```
+
+之后查看日志输出。
+
+```sh
+docker logs -f webapp
+```
+
+接下来可以请求服务。
+
+```:zero:
+curl -i -H 'Accept: application/json' -d 'name=Foo&status=Bar' http://localhost:32773/json
+```
+
+## 启动Redis
+
+接下来我们为Sinatra应用加入Redis作为后台数据库。并在Redis中存储输入的URL参数。
+
+接下来我们我们使用代码目录下的webapp_redis替代webapp。先为目录分配可执行权限。
+
+```sh
+chmod +x webapp_redis/bin/webapp
+```
+
+之后在sinatra目录下创建一个redis目录，用于保存Dockerfile。接下来编辑Dockerfile。
+
+```dockerfile
+FROM ubuntu
+ENV REFRESHED_AT 2014-06-01
+RUN apt-get -yyq update && apt-get -yqq install redis-server redis-tools
+EXPOSE 6379
+ENTRYPOINT ["/usr/bin/redis-server"]
+CMD []
+```
+
+之后构建镜像。
+
+```:zero:
+docker build -t taodaling/redis .
+```
+
+先启动redis容器。
+
+```:zero:
+docker run -d -p 6379 --name redis taodaling/redis
+```
+
+## 连接Sinatra和Redis
+
+接下来连接Sinatra和Redis。要建立连接，有以下方式。
+
+- Docker内部网络。
+- 使用Docker Networking以及docker network命令。
+- Docker链接。一个可以将具体容器链接到一起来进行通信的抽象层。
+
+第一种方式比较简单但是功能也比较弱，不推荐使用。如果在Docker1.9及之后的版本推荐使用Docker Networking，如果之前的版本应该使用Docker链接。
+
+Docker Networking相较于Docker链接的区别有下列。
+
+- Docker Networking可以跨宿主机连接容器
+- 停止启动或者重启容器不需要更新连接。
+- Docker Networking可以在容器创建之前创建。
+
+## 内部联网
+
+到目前为止我们看到的Docker容器都是公开端口，并绑定到本地网络端口的。除了这种方法，Docker还提供了内部网络。
+
+在安装Docker时，会创建一个新的网络接口，名字是docker0。每个Docker容器都会在这个接口上分配一个IP地址。接下来查看docker0接口。
+
+```
+$ ip a show docker0
+
+5: docker0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default 
+    link/ether 02:42:2b:b5:f8:ca brd ff:ff:ff:ff:ff:ff
+    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::42:2bff:feb5:f8ca/64 scope link 
+       valid_lft forever preferred_lft forever
+```
+
+可以看到docker0接口有符合RFC1918的私有IP地址，范围是172.16~172.30，而接口本身地址172.17.0.1是这个Docker网络的网关地址，也是所有Docker容器的网关地址。
+
+Docker默认会使用172.17.x.x作为子网地址，除非已经有人占用了这个子网。如果被占用了，Docker会在172.16~172.30这个范围内尝试创建子网。
+
+接口docker0是一个虚拟的以太网桥，用于连接容器和本地宿主网络。如果进一步查看Docker宿主机的其它网络接口，会发现一系列名字以veth开头的接口。
+
+```:zero:
+veth26166aa@if261: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master docker_gwbridge state UP group default 
+    link/ether fe:9c:b1:14:f4:e7 brd ff:ff:ff:ff:ff:ff link-netnsid 26
+    inet6 fe80::fc9c:b1ff:fe14:f4e7/64 scope link 
+       valid_lft forever preferred_lft forever
+```
+
+Docker每创建一个容器就会创建一个一组互联的网络接口。这组接口就像管道的两端，其中一端作为容器中的eth0接口，而另外一端统一命名为类似veth123这种名字，作为宿主机的一个端口。可以将veth接口认为是虚拟网线的一端，这个虚拟网线一端插在名为docker0的网桥上，另外一端插在容器中。通过把每个veth*接口绑定到docker0网桥，Docker创建了一个虚拟子网，这个子网由宿主机和所有的容器共享。
+
+在docker容器中查看网卡信息。
+
+```sh
+$ ifconfig eth0
+
+eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 172.17.0.7  netmask 255.255.0.0  broadcast 172.17.255.255
+        ether 02:42:ac:11:00:07  txqueuelen 0  (Ethernet)
+        RX packets 4151  bytes 15873185 (15.8 MB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 3958  bytes 321224 (321.2 KB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+```
+
+可以看到Docker给容器分配了IP地址172.17.0.7作为宿主虚拟接口的另一端，这样就能让宿主网络和容器相互通信了。
+
+安装traceroute工具并查看报文转发路径。
+
+```sh
+$ apt-get -yqq update && apt-get install -yqq traceroute
+$ traceroute google.com
+
+ 1  172.17.0.1 (172.17.0.1)  0.047 ms  0.014 ms  0.012 ms
+ 2  192.168.1.1 (192.168.1.1)  1.114 ms  1.036 ms  0.918 ms
+ 3  122.235.136.1 (122.235.136.1)  36.845 ms  37.767 ms  37.711 ms
+ 4  61.164.0.205 (61.164.0.205)  6.480 ms  7.152 ms  7.087 ms
+ 5  61.164.22.105 (61.164.22.105)  7.023 ms  6.967 ms 220.191.157.25 (220.191.157.25)  7.651 ms
+ 6  202.97.26.9 (202.97.26.9)  8.326 ms 202.97.55.17 (202.97.55.17)  6.657 ms 202.97.26.1 (202.97.26.1)  4.958 ms
+```
+
+可以看到容器的下一跳就是宿主网络上docker0接口的网关IP172.17.0.1。
+
+接下来我们要访问容器的端口，我们可以先获得容器的子网IP，之后通过子网IP:绑定宿主机端口进行访问。
+
+但是由于docker在容器重启后会重新分配IP，因此硬编码的方式并不是理想的解决方案。
 
 # 配置
 
@@ -891,3 +1128,4 @@ ONBUILD ENV relation="I'm son of x"
 ```
 
 ONBUILD命令不会被继承，因此一个镜像在孙子镜像构建时并不会被执行。
+
