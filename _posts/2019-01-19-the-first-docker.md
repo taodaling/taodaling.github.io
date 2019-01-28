@@ -64,6 +64,8 @@ Docker Hub中有两种类型的仓库，用户仓库和顶层仓库，用户仓�
 
 Docker借鉴了集装箱的概念，集装箱将货物运往各地，集装箱不关心内部的货物。在Docker中， 容器就是集装箱，Docker就是运输集装箱的船只，而镜像就是集装箱中的货物，而你的笔记本、服务器等就是集装箱的目的地。
 
+
+
 # 快速上手
 
 ## 安装
@@ -1097,6 +1099,138 @@ redis
 ```sh
 $ docker stop -t 60 redis #60秒内停止容器内应用
 ```
+
+## 编排
+
+编排（orchestration）描述了自动配置、协助和管理服务的过程。编排用于描述一组实际过程，这个过程会管理运行在不同宿主机上，不同容器中的应用。
+
+## Docker Compose
+
+使用Docker Compose，可以用YAML文件定义一组要启动的容器以及容器的属性。Docker Compose称这些容器为服务，并定义：
+
+容器通过某些方法并指定一些运行时属性来和其它容器交互。
+
+## 安装Docker Compose
+
+安装的方式可以在官网[https://docs.docker.com/compose/](https://docs.docker.com/compose/)上找到。
+
+## 创建示例应用
+
+创建目录并编辑Dockerfile。
+
+```sh
+$ mkdir composeapp && cd composeapp
+$ touch Dockerfile
+```
+
+编辑app.py文件。
+
+```python
+from flask import Flask
+from redis import Redis
+import os
+
+app = Flask(__name__)
+redis = Redis(host="redis_1", port=6379)
+
+@app.route('/')
+def hello():
+  redis.incr('hits')
+  return 'Hello, we have met {0} times'.format(redis.get('hits'))
+
+if __name__ == '__main__':
+  app.run(host='0.0.0.0', debug=True)
+```
+
+编辑requirement.txt文件。
+
+```
+flask
+redis
+```
+
+编辑Dockerfile文件。
+
+```dockerfile
+FROM python:2.7
+ADD . /composeapp
+WORKDIR /composeapp
+RUN pip install -r requirements.txt
+```
+
+构建镜像。
+
+```sh
+$ docker build -t taodaling/composeapp .
+```
+
+## docker-compose.yml文件
+
+构建好镜像后，可以利用Compose来创建需要的服务。在Compose中，除了定义要启动的服务外，还需要定义服务启动所需的属性，这些属性类似于docker  run命令的参数。
+
+将所有与服务相关的属性定义在一个YAML文件中，之后利用docker-compose up命令启动，docker-compose会利用文件中定义的属性启动容器，并将所有的日志输出合并到一起。
+
+现在编辑docker-compose.yml文件。
+
+```yaml
+web:
+  image: taodaling/composeapp
+  command: python app.py
+  ports:
+  - "5000:5000"
+  volumes:
+  - .:/composeapp
+  links:
+  - redis
+redis:
+  image: redis
+```
+
+现在可以用启动我们的服务。
+
+```sh
+$ docker-compose up
+
+Starting composeapp_redis_1_8f986c0b5b54 ... done
+Starting composeapp_web_1_a32f7f24c8a0   ... done
+Attaching to composeapp_redis_1_8f986c0b5b54, composeapp_web_1_a32f7f24c8a0
+redis_1_8f986c0b5b54 | 1:C 28 Jan 2019 15:40:41.034 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+redis_1_8f986c0b5b54 | 1:C 28 Jan 2019 15:40:41.034 # Redis version=5.0.3, bits=64, commit=00000000, modified=0, pid=1, just started
+redis_1_8f986c0b5b54 | 1:C 28 Jan 2019 15:40:41.034 # Warning: no config file specified, using the default config. In order to specify a config file use redis-server /path/to/redis.conf
+redis_1_8f986c0b5b54 | 1:M 28 Jan 2019 15:40:41.036 * Running mode=standalone, port=6379.
+redis_1_8f986c0b5b54 | 1:M 28 Jan 2019 15:40:41.036 # WARNING: The TCP backlog setting of 511 cannot be enforced because /proc/sys/net/core/somaxconn is set to the lower value of 128.
+redis_1_8f986c0b5b54 | 1:M 28 Jan 2019 15:40:41.036 # Server initialized
+redis_1_8f986c0b5b54 | 1:M 28 Jan 2019 15:40:41.036 # WARNING overcommit_memory is set to 0! Background save may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+redis_1_8f986c0b5b54 | 1:M 28 Jan 2019 15:40:41.036 # WARNING you have Transparent Huge Pages (THP) support enabled in your kernel. This will create latency and memory usage issues with Redis. To fix this issue run the command 'echo never > /sys/kernel/mm/transparent_hugepage/enabled' as root, and add it to your /etc/rc.local in order to retain the setting after a reboot. Redis must be restarted after THP is disabled.
+redis_1_8f986c0b5b54 | 1:M 28 Jan 2019 15:40:41.036 * DB loaded from disk: 0.000 seconds
+redis_1_8f986c0b5b54 | 1:M 28 Jan 2019 15:40:41.036 * Ready to accept connections
+web_1_a32f7f24c8a0 |  * Serving Flask app "app" (lazy loading)
+web_1_a32f7f24c8a0 |  * Environment: production
+web_1_a32f7f24c8a0 |    WARNING: Do not use the development server in a production environment.
+web_1_a32f7f24c8a0 |    Use a production WSGI server instead.
+web_1_a32f7f24c8a0 |  * Debug mode: on
+web_1_a32f7f24c8a0 |  * Running on http://0.0.0.0:5000/ (Press CTRL+C to quit)
+web_1_a32f7f24c8a0 |  * Restarting with stat
+web_1_a32f7f24c8a0 |  * Debugger is active!
+web_1_a32f7f24c8a0 |  * Debugger PIN: 307-737-617
+```
+
+可以看到compose创建了composeapp_redis_1_8f986c0b5b54和composeapp_web_1_a32f7f24c8a0容器，这两个名字是通过一系列规则生成的，用于保证容器名唯一。同时可以看到日志汇总了redis和composeapp的日志。
+
+我们也可以以守护进程的方式启动容器。
+
+```sh
+$ docker-compose up -d
+
+Starting composeapp_redis_1_8f986c0b5b54 ... done
+Starting composeapp_web_1_a32f7f24c8a0   ... done
+```
+
+之后访问`{{host}}:5000`就可以看到页面了。
+
+Redis和composeapp之间的连接是通过由Compose控制的容器之间的链接实现的。
+
+默认情况下，docker-compose会连接本地的Docker守护进程，但是如果你显式指定了DOCKER_HOST环境变量，那么docker-compose会请求该地址指定的守护进程。
 
 # 配置
 
