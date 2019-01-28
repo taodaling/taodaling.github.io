@@ -78,13 +78,13 @@ Docker借鉴了集装箱的概念，集装箱将货物运往各地，集装箱�
 ## 运行docker守护进程
 
 ```sh
-service docker start
+$ service docker start
 ```
 
 启动docker守护进程
 
 ```sh
-service docker status
+$ service docker status
 ```
 
 查看docker守护进程状态
@@ -92,15 +92,15 @@ service docker status
 ## 查看docker信息
 
 ```sh
-docker info
+$ docker info
 ```
 
 会显示docker的各项信息
 
 ## 第一个容器，运行ubuntu镜像
 
-```shj
-docker run -i -t ubuntu /bin/bash
+```sh
+$ docker run -i -t ubuntu /bin/bash
 ```
 
 -i和-t是交互式shell的必要参数，前者保证容器的STDIN是开启的，而后者则告诉Docker为创建的容器分配一个伪tty终端。这样新建的容器才能提供一个交互式的shell。
@@ -116,7 +116,7 @@ Docker首先会检查本地是否存在ubuntu镜像缓存，如果不存在，�
 之后我们在容器中安装vim软件。
 
 ```sh
-apt-get update && apt-get intall vim
+$ apt-get update && apt-get intall vim
 ```
 
 用户可以在容器中做任何自己想做的事情，当工作完成后，输入exit返回到宿主机。exit会退出/bin/bash命令，而bin/bash命令是容器的唯一命令，一旦/bin/bash退出，容器也会相应地退出。
@@ -126,9 +126,9 @@ apt-get update && apt-get intall vim
 但是即使容器退出了，容器依旧是存在的，可以用docker ps -a命令查看当前系统中所有容器。默认情况下docker ps只会查看正在运行的容器，加了-a可以查看所有的容器，包括运行的和停止的。
 
 ```sh
-docker ps #查看运行中容器
-docker ps -a #查看所有的容器
-docker ps -l #查看最后一个执行的容器
+$ docker ps #查看运行中容器
+$ docker ps -a #查看所有的容器
+$ docker ps -l #查看最后一个执行的容器
 ```
 
 ## 容器标志符
@@ -138,10 +138,10 @@ docker ps -l #查看最后一个执行的容器
 如果你没有指定容器名称，那么docker会为我们创建的容器自动生成一个随机名称，如果要自己指定的话，--name标志可以指定自定义名称。
 
 ```sh
-docker run --name bob_the_contaienr -i -t ubuntu /bin/bash
-exit
-docker ps -l #显示最后一个容器
-docker ps -n 10 #显示最后10个容器
+$ docker run --name bob_the_contaienr -i -t ubuntu /bin/bash
+$ exit
+$ docker ps -l #显示最后一个容器
+$ docker ps -n 10 #显示最后10个容器
 ```
 
 一个合法的容器名必须满足正则表达式"[a-zA-Z0-9_.-]+"。
@@ -155,7 +155,7 @@ docker ps -n 10 #显示最后10个容器
 之前的bob_the_container容器已经停止了，我们可以重新启动它。
 
 ```sh
-docker start bob_the_container
+$ docker start bob_the_container
 ```
 
 继续使用ps命令可以看到bob_the_container处于UP状态。
@@ -167,7 +167,7 @@ docker start bob_the_container
 容器重启后，会沿用docker run命令时指定的参数来运行，因此我们容器重启后会运行一个交互式会话shell。此外，可以用docker attach命令重新附着到该容器的会话上。
 
 ```sh
-docker attach bob_the_container
+$ docker attach bob_the_container
 ```
 
 ## 创建守护式容器
@@ -175,7 +175,7 @@ docker attach bob_the_container
 除了交互式容器外容器外，还可以创建守护式容器，守护式容器没有交互式会话，非常适合运行应用程序和服务。在运行时增加-d参数可以声明容器为守护式容器。
 
 ```sh
-docker run --name deamon_dave -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
+$ docker run --name deamon_dave -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
 ```
 
 利用docker ps命令可以看到创建了一个正在运行的容器。
@@ -185,13 +185,13 @@ docker run --name deamon_dave -d ubuntu /bin/sh -c "while true; do echo hello wo
 由于守护容器在后台运行，要探究该容器内部都干了什么，可以用docker logs命令来获取容器的日志。
 
 ```sh
-docker logs daemon_dave
+$ docker logs daemon_dave
 ```
 
 要退出容器跟踪，输入ctrl+c。docker仅会返回最后的几条日志。使用-f参数可以持续监控日志。
 
 ```sh
-docker logs -f daemon_dave
+$ docker logs -f daemon_dave
 ```
 
 为了便于调试，使用-t标志位每条日志项追加上时间戳。
@@ -203,8 +203,8 @@ docker logs -f daemon_dave
 默认的日志驱动是json-file，可用的选项还有syslog，该选项会禁用所有docker logs命令，并将所有容器的日志输出都重定向到syslog上。可以在启动Docker守护进程时候指定该选项，这样所有容器的日志都会输出到syslog，或者通过docker run对个别容器进行日志冲定向输出。
 
 ```sh
-docker run --log-driver="syslog" --name deamon_dwayne -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
-tail -f /var/log/*
+$ docker run --log-driver="syslog" --name deamon_dwayne -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
+$ tail -f /var/log/*
 ```
 
 还有一个可用选项是none，这个选项会禁用所有容器中的日志。
@@ -214,7 +214,7 @@ tail -f /var/log/*
 我们不仅能看到容器内的日志，还能看到容器内部运行的进程。
 
 ```sh
-docker top daemon_dave
+$ docker top daemon_dave
 ```
 
 利用top命令，可以看到容器内的所有进程。
@@ -224,7 +224,7 @@ docker top daemon_dave
 利用docker stats命令，可以看到一个或多个容器的统计信息。
 
 ```sh
-docker stats --no-stream
+$ docker stats --no-stream
 ```
 
 ## 在容器内部运行进程
@@ -232,13 +232,13 @@ docker stats --no-stream
 在docker中，可以通过docker exec命令在容器内额外启动新的进程，可以在容器内运行的进程有两类：后台任务和交互式任务。后台任务在容器内运行且没有交互需求，而交互式任务则保持在前台运行。
 
 ```sh
-docker exec -d daemon_dave touch /etc/new/config/file
+$ docker exec -d daemon_dave touch /etc/new/config/file
 ```
 
 这里-d标志表明运行的是一个后台进程。而不加-d则可以开启一个交互任务，比如开启一个新的shell。
 
 ```sh
-docker exec -t -i daemon_dave /bin/bash
+$ docker exec -t -i daemon_dave /bin/bash
 ```
 
 ## 停止守护式容器
@@ -246,13 +246,13 @@ docker exec -t -i daemon_dave /bin/bash
 要停止守护式容器，只需要执行docker stop命令。
 
 ```sh
-docker stop daemon_dave
+$ docker stop daemon_dave
 ```
 
 docker stop命令会向Docker容器进程发送SIGTERM信号，如果想要快速停止某个容器，可以使用docker kill命令向容器进程发送SIGKILL命令。
 
 ```sh
-docker kill daemon_dave
+$ docker kill daemon_dave
 ```
 
 ## 自动重启容器
@@ -260,7 +260,7 @@ docker kill daemon_dave
 可以增加--restart标记，让docker容器因错误而停止运行时自动重启。docker会检查容器的退出代码，并依据此决定是否要重启容器。默认情况下docker不会重启容器。
 
 ```sh
-docker run --restart always --name daemon_restart -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
+$ docker run --restart always --name daemon_restart -d ubuntu /bin/sh -c "while true; do echo hello world; sleep 1; done"
 ```
 
 在上面这个例子中，--restart被设置为always，无论容器的退出代码实是什么，docker都会自动重启容器。除了always外，可选的值还有on-failure，只有当容器的退出代码非0时才会自动重启。同时on-failure还支持最大重启次数。
@@ -270,19 +270,19 @@ docker run --restart always --name daemon_restart -d ubuntu /bin/sh -c "while tr
 尽管通过ps命令可以获取容器的信息，但是要获得更多信息，你需要使用inspect命令。
 
 ```sh
-docker inspect daemon_dave
+$ docker inspect daemon_dave
 ```
 
 ## 删除容器
 
 ```sh
-docker rm daemon_dave #移除容器
+$ docker rm daemon_dave #移除容器
 ```
 
 rm命令用于删除停止的容器，如果要删除运行中的容器，需要加上-f参数。
 
 ```sh
-docker rm `docker ps -a -q` #删除所有的停止容器
+$ docker rm `docker ps -a -q` #删除所有的停止容器
 ```
 
 docker ps -a -q会返回所有容器的名称，因此，你可以利用上面的命令删除所有的停止容器。
@@ -292,8 +292,8 @@ docker ps -a -q会返回所有容器的名称，因此，你可以利用上面�
 利用docker images命令可以列出本地存储的Docker镜像。
 
 ```sh
-docker images #列出镜像列表
-docker images fedora #仅查看fedora镜像
+$ docker images #列出镜像列表
+$ docker images fedora #仅查看fedora镜像
 ```
 
 本地的镜像都保存在Docker宿主机的/var/lib/docker目录下。
@@ -303,7 +303,7 @@ docker images fedora #仅查看fedora镜像
 我们可以利用docker pull命令从Registry中拉取镜像。
 
 ```sh
-docker pull ubuntu:latest
+$ docker pull ubuntu:latest
 ```
 
 ## 查找镜像
@@ -311,7 +311,7 @@ docker pull ubuntu:latest
 利用docker search命令可以查找所有Docker Hub上公共的可用镜像。
 
 ```sh
-docker search puppet
+$ docker search puppet
 ```
 
 ## 创建Docker Hub账号
@@ -319,13 +319,13 @@ docker search puppet
 我们可以在[https://hub.docker.com/signup](https://hub.docker.com/signup)上创建自己的账号。之后在本地登录Docker Hub：
 
 ```sh
-docker login
+$ docker login
 ```
 
 对应的，如果你想要登出账号，可以使用docker logout命令。
 
 ```sh
-docker logout
+$ docker logout
 ```
 
 ## 使用docker commit构建镜像
@@ -335,27 +335,27 @@ docker logout
 一般来说，我们不会完全重新创建一个镜像，而是基于一个已有的镜像做一些修改后构建出自己的镜像。
 
 ```sh
-docker run -i -t --name custom_ubuntu ubuntu /bin/bash
+$ docker run -i -t --name custom_ubuntu ubuntu /bin/bash
 ```
 
 进入shell后，输入
 
 ```sh
-apt-get -yqq update
-apt-get -y install apache2
-exit
+$ apt-get -yqq update
+$ apt-get -y install apache2
+$ exit
 ```
 
 退出shell后输入
 
 ```sh
-docker commit custom_ubuntu taodaling/custom_ubuntu
+$ docker commit custom_ubuntu taodaling/custom_ubuntu
 ```
 
 commit将修改后的容器的顶层（读写层）抽出作为一个新的镜像，并提交到本地仓库。
 
 ```sh
-docker commit -m "A customized image" -a "taodaling" custom_ubuntu taoodaling/custom_ubuntu:webserver
+$ docker commit -m "A customized image" -a "taodaling" custom_ubuntu taoodaling/custom_ubuntu:webserver
 ```
 
 ## 使用docker build构建镜像
@@ -367,9 +367,9 @@ docker commit -m "A customized image" -a "taodaling" custom_ubuntu taoodaling/cu
 在使用build之前，需要提供Dockerfile。
 
 ```sh
-mkdir static_web
-cd static_web
-touch Dockerfile
+$ mkdir static_web
+$ cd static_web
+$ touch Dockerfile
 ```
 
 我们创建了一个目录static_web，这个目录就是我们的构建环境，Docker称这个环境为上下文（context）。Docker在构建镜像时会将上下文的文件和目录上传到Docker守护进程。
@@ -414,13 +414,13 @@ EXPOSE指令告诉Docker容器内的应用程序将会使用容器的指定端�
 下面我们用这个Dockfile构建镜像。
 
 ```sh
-docker build -t "taodaling/static_web:v1" .
+$ docker build -t "taodaling/static_web:v1" .
 ```
 
 上面的使用./Dockerfile构建镜像。你也可以使用GIt仓库中的Dockerfile。
 
 ```sh
-docker build -t "taodaling/static_web:v1" git@github.com:jamtur01/docker-static_web
+$ docker build -t "taodaling/static_web:v1" git@github.com:jamtur01/docker-static_web
 ```
 
 如果在上下文根目录存在以`.dockerignore`命名的文件的话，那么该文件的每一行都指定一个过滤模式，类似于`.gitignore`文件。该文件用来设置哪些文件不会被当做构建上下文的一部分，匹配规则采用的是Go语言的filepath。
@@ -430,13 +430,13 @@ docker build -t "taodaling/static_web:v1" git@github.com:jamtur01/docker-static_
 我们修改上面Dockerfile中安装nginx的指令，令其失败。
 
 ```dockerfile
-RUN apt-get update && apt-get install -y ngin
+$ RUN apt-get update && apt-get install -y ngin
 ```
 
 之后构建镜像。
 
 ```sh
-docker build -t "taodaling/static_web:failure" .
+$ docker build -t "taodaling/static_web:failure" .
 ```
 
 docker构建过程中会发生报错，利用docker ps命令可以看到最后一次执行的容器，之后用inspect命令得到容器的镜像名，利用镜像重建一个容器，就可以手动进行调试。
@@ -447,8 +447,8 @@ docker构建过程中会发生报错，利用docker ps命令可以看到最后�
 
 然而，有的时候我们必须禁用缓存，比如我们希望每次都重新执行apt-get update命令，以获得最新的更新。为了禁用缓存，可以在使用build命令时使用--no-cache标志。
 
-```
-docker build --no-cache -t "taodaling/static_web:no_cache .
+```sh
+$ docker build --no-cache -t "taodaling/static_web:no_cache .
 ```
 
 ## 基于构建缓存的Dockerfile
@@ -469,15 +469,15 @@ ENV指令用于设置环境变量REFRESHED_AT值为2014-07-01。这个环境变�
 要查看一个镜像的构建过程，可以使用history命令。
 
 ```sh
-docker history taodaling/static_web
+$ docker history taodaling/static_web
 ```
 
 ## 从新镜像上启动容器
 
 首先启动我们刚才构建的容器。
 
-```
-docker run -d -p 80 --name static_web taodaling/static_web \
+```sh
+$ docker run -d -p 80 --name static_web taodaling/static_web \
 nginx -g "daemon off;"
 ```
 
@@ -498,21 +498,21 @@ CONTAINER ID        IMAGE                           COMMAND                  CRE
 除了用docker ps命令外，docker port也可以帮助我们查看容器的端口映射情况。
 
 ```sh
-docker port static_web #查看static_web的所有端口映射关系
-docker port static_web 80 #仅查看static_web的80端口映射关系
+$ docker port static_web #查看static_web的所有端口映射关系
+$ docker port static_web 80 #仅查看static_web的80端口映射关系
 ```
 
 要显式地配置映射关系，可以通过`-p 宿主机端口:容器端口`的方式指定。
 
 ```sh
-docker run -d -p 8080:80 --name static_web taodaling/static_web \
+$ docker run -d -p 8080:80 --name static_web taodaling/static_web \
 nginx -g "daemon off;"
 ```
 
 我们还可以将端口绑定在特定的IP地址上，用法为`-p 宿主机IP地址:宿主机端口:容器端口`。
 
 ```sh
-docker run -d -p 127.0.0.1:8080:80 --name static_web taodaling/static_web \
+$ docker run -d -p 127.0.0.1:8080:80 --name static_web taodaling/static_web \
 nginx -g "daemon off;"
 ```
 
@@ -521,14 +521,14 @@ nginx -g "daemon off;"
 Docker还提供了一个更加便捷的-P参数，用于公开在Dockerfile中通过EXPOSE指令公开的所有端口，将其中每一个以随机的方式绑定到宿主机的端口上。
 
 ```sh
-docker run -d -P --name static_web taodaling/static_web \
+$ docker run -d -P --name static_web taodaling/static_web \
 nginx -g "daemon off;"
 ```
 
 你也可以显式指定端口使用的是TCP还是UDP协议，用法为`[[ip:][宿主机端口]:][容器端口][/tcp|/udp]`。
 
 ```sh
-docker run -d -p 127.0.0.1:8080:80/tcp --name static_web taodaling/static_web \
+$ docker run -d -p 127.0.0.1:8080:80/tcp --name static_web taodaling/static_web \
 nginx -g "daemon off;"
 ```
 
@@ -541,7 +541,7 @@ nginx -g "daemon off;"
 docker push命令就可以用于将镜像推送到Docker Hub。
 
 ```sh
-docker push taodaling/static_web
+$ docker push taodaling/static_web
 ```
 
 ## 自动构建
@@ -553,7 +553,7 @@ docker push taodaling/static_web
 如果不再需要一个镜像了，也可以利用docker rmi将其删除。删除镜像的同时会删除构建镜像过程中创建的中间镜像层。
 
 ```sh
-docker rmi taodaling/static_web
+$ docker rmi taodaling/static_web
 ```
 
 rmi仅会删除本地的镜像缓存，而不会推送到远程仓库。
@@ -565,25 +565,25 @@ rmi仅会删除本地的镜像缓存，而不会推送到远程仓库。
 从Docker容器启动一个Registry服务非常简单。
 
 ```sh
-docker run -p 5000:5000 registry
+$ docker run -p 5000:5000 registry
 ```
 
 要向我们的Registry推送镜像，首先需要打上标记。首先我们要获得镜像的ID。
 
 ```sh
-docker tag 22d47c8cb6e5 localhost:5000/taodaling/static_Web
+$ docker tag 22d47c8cb6e5 localhost:5000/taodaling/static_Web
 ```
 
 之后就可以向你的Registry推送。
 
 ```sh
-docker push localhost:5000/taodaling/static_Web
+$ docker push localhost:5000/taodaling/static_Web
 ```
 
 同样，要运行容器，可以使用下面命令。
 
 ```sh
-docker run localhost:5000/taodaling/static_Web
+$ docker run localhost:5000/taodaling/static_Web
 ```
 
 ## 构建网站
@@ -655,7 +655,7 @@ This is a test website for Docker
 Sinatra是一个基于Ruby的Web应用框架。
 
 ```sh
-mkdir sinatra && cd sinatra
+$ mkdir sinatra && cd sinatra
 ```
 
 之后编辑Dockerfile文件。
@@ -673,37 +673,37 @@ CMD ["/opt/webapp/bin/webapp"]
 之后构建镜像。
 
 ```sh
-docker build -t taodaling/sinatra .
+$ docker build -t taodaling/sinatra .
 ```
 
 接下来下载代码。
 
 ```sh
-git clone https://github.com/turnbullpress/dockerbook-code.git
+$ git clone https://github.com/turnbullpress/dockerbook-code.git
 ```
 
 之后我们要保证webapp/bin/webapp这个文件可以执行。
 
 ```sh
-chmod +x webapp/bin/webapp
+$ chmod +x webapp/bin/webapp
 ```
 
 之后我们启动容器。
 
 ```sh
-docker run -d -p 4567 --name webapp -v $PWD/webapp:/opt/webapp taodaling/sinatra
+$ docker run -d -p 4567 --name webapp -v $PWD/webapp:/opt/webapp taodaling/sinatra
 ```
 
 之后查看日志输出。
 
 ```sh
-docker logs -f webapp
+$ docker logs -f webapp
 ```
 
 接下来可以请求服务。
 
-```:zero:
-curl -i -H 'Accept: application/json' -d 'name=Foo&status=Bar' http://localhost:32773/json
+```sh
+$ curl -i -H 'Accept: application/json' -d 'name=Foo&status=Bar' http://localhost:32773/json
 ```
 
 ## 启动Redis
@@ -713,7 +713,7 @@ curl -i -H 'Accept: application/json' -d 'name=Foo&status=Bar' http://localhost:
 接下来我们我们使用代码目录下的webapp_redis替代webapp。先为目录分配可执行权限。
 
 ```sh
-chmod +x webapp_redis/bin/webapp
+$ chmod +x webapp_redis/bin/webapp
 ```
 
 之后在sinatra目录下创建一个redis目录，用于保存Dockerfile。接下来编辑Dockerfile。
@@ -729,14 +729,14 @@ CMD []
 
 之后构建镜像。
 
-```:zero:
-docker build -t taodaling/redis .
+```sh
+$ docker build -t taodaling/redis .
 ```
 
 先启动redis容器。
 
-```:zero:
-docker run -d -p 6379 --name redis taodaling/redis
+```sh
+$ docker run -d -p 6379 --name redis taodaling/redis
 ```
 
 ## 连接Sinatra和Redis
@@ -761,7 +761,7 @@ Docker Networking相较于Docker链接的区别有下列。
 
 在安装Docker时，会创建一个新的网络接口，名字是docker0。每个Docker容器都会在这个接口上分配一个IP地址。接下来查看docker0接口。
 
-```
+```sh
 $ ip a show docker0
 
 5: docker0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default 
@@ -823,6 +823,281 @@ $ traceroute google.com
 
 但是由于docker在容器重启后会重新分配IP，因此硬编码的方式并不是理想的解决方案。
 
+## Docker Networking
+
+容器之间的连接用网络建立，称为Docker Networking。Docker Networking允许用户创建自己的网络，容器可以通过这个网络相互通信。实际上，Docker Networking利用新的用户管理的网络补充了现有的docker0。更重要的是，现在容器可以跨越不同的宿主机进行通信，并且网络的配置也更加的灵活。Docker Netwroking还与Docker compose以及swarm进行了集成，后面会介绍到。
+
+首先我们先创建一个网络。
+
+```sh
+$ docker network create app
+```
+
+上面我们用docker network命令创建了一个桥接网络，名称为app。这个命令会返回被创建的网络ID。之后我们来查看这个网络。
+
+```sh
+$ docker network inspect app
+
+[
+    {
+        "Name": "app",
+        "Id": "c7fe77eefef3570e52ba2c74bdd9a24037b84150b366625e84d4d75c8f747b36",
+        "Created": "2019-01-26T21:04:09.533540764-05:00",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": {},
+            "Config": [
+                {
+                    "Subnet": "172.21.0.0/16",
+                    "Gateway": "172.21.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {},
+        "Options": {},
+        "Labels": {}
+    }
+]
+```
+
+这个网络是一个运行在本地的桥接网络。我们看到现在还没有容器在这个网络中运行。
+
+除了运行于单台主机上的桥接网络，我们也可以创建一个overlay网络，overlay网络允许我们跨越多台宿主机进行通信。
+
+利用docker network ls命令查看当前系统中的所有网络。
+
+```sh
+$ docker network ls
+
+NETWORK ID          NAME                        DRIVER              SCOPE
+c7fe77eefef3        app                         bridge              local
+56f467ed3e21        bridge                      bridge              local
+```
+
+也可以使用docker network rm命令删除一个Docker网络。
+
+```sh
+$ docker network create temp
+$ docker network rm temp
+
+temp
+```
+
+我们接下来先启动Redis容器，并在app网络中添加一些容器。
+
+```sh
+$ docker run -d --net app --name db taodaling/redis
+
+b9e9d746fd45cfbb29b0436b14fa7cd4a6b65a75fb708facc3aa7bed9886cd14
+```
+
+这里我们使用了一个新的选项--net，`--net 网络名称或ID`，这会将容器加入到app网络中。重新查看网络状态。
+
+```sh
+$ docker network inspect app
+
+[
+    {
+        "Name": "app",
+        "Id": "c7fe77eefef3570e52ba2c74bdd9a24037b84150b366625e84d4d75c8f747b36",
+        "Created": "2019-01-26T21:04:09.533540764-05:00",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": {},
+            "Config": [
+                {
+                    "Subnet": "172.21.0.0/16",
+                    "Gateway": "172.21.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "9ad7565c436872ffc2cb0f322d210f4ecff359693b22ba4c713166e29696799f": {
+                "Name": "db",
+                "EndpointID": "d3efbb0a99f90bd8f6a26446693322f09b24344678a76b7abc6107857fe81e25",
+                "MacAddress": "02:42:ac:15:00:02",
+                "IPv4Address": "172.21.0.2/16",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {},
+        "Labels": {}
+    }
+]
+```
+
+我们可以看到网络中出现了一个容器，并为其分配的IP地址。
+
+接下来我们启动Sinatra应用程序。
+
+```sh
+$ docker run -p 4567 --net=app --name webapp -t -i -v $PWD/webapp:/opt/webapp taodaling/sinatra /bin/bash
+```
+
+之后我们查看容器中的/etc/hosts文件。
+
+```sh
+$ cat /etc/hosts
+
+127.0.0.1       localhost
+::1     localhost ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+172.21.0.3      29228d49ac55
+```
+
+可以尝试在容器中ping容器db。
+
+```sh
+$ ping db
+
+PING db (172.21.0.2) 56(84) bytes of data.
+64 bytes from db.app (172.21.0.2): icmp_seq=1 ttl=64 time=0.054 ms
+64 bytes from db.app (172.21.0.2): icmp_seq=2 ttl=64 time=0.060 ms
+```
+
+接下来我们启动自己的webapp。
+
+```sh
+$ docker run -d -p 4567 --name webapp -v $PWD/webapp_redis:/opt/webapp taodaling/sinatra
+
+895a99be17dd40824b047df29dc97fda05b09ca9f83b96d91ab22198d259087e
+```
+
+测试效果。
+
+```sh
+$ curl -i -H 'Accept: application/json' -d 'name=Foo&status=Bar' http://localhost:32779/json
+
+HTTP/1.1 200 OK 
+Content-Type: text/html;charset=utf-8
+Content-Length: 29
+X-Xss-Protection: 1; mode=block
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+Server: WEBrick/1.4.2 (Ruby/2.5.1/2018-03-29)
+Date: Sun, 27 Jan 2019 09:04:19 GMT
+Connection: Keep-Alive
+
+{"name":"Foo","status":"Bar"}
+```
+
+## 连接已有容器到Docker网络
+
+可以将正在运行的容器通过docker network connect命令添加到已有网络中。假设我们在运行db容器之前没有指定网络。下面我们将它加入我们的app网络。
+
+```sh
+$ docker network connect app db
+```
+
+我们也可以通过docker network disconnect命令断开一个容器与网络的连接。
+
+```sh
+$ docker network disconnect app db
+```
+
+一个容器可以同时连接到多个Docker网络上，因此我们可以创建非常复杂的网络模型。
+
+## 通过Docker链接的方式连接容器
+
+在Docker 1.9版本之前，可以使用Docker链接来连接多个容器。我们先启动db容器。
+
+```sh
+$ docker run -d --name redis taodaling/redis /usr/bin/redis-server --protected-mode no
+```
+
+注意上面我们没有选择暴露端口。查看容器IP地址信息。
+
+```sh
+$ docker inspect redis
+
+...
+           "Networks": {
+                "bridge": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": null,
+                    "NetworkID": "56f467ed3e212bc5b18f8695e3bf23aa30b4b015611ada3feff3e70caedce8c3",
+                    "EndpointID": "b377cecbffc2cec8c18329d06f7794a8560f11c2f0ea943e4579cb7c188bfc9c",
+                    "Gateway": "172.17.0.1",
+                    "IPAddress": "172.17.0.6",
+                    "IPPrefixLen": 16,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "MacAddress": "02:42:ac:11:00:06",
+                    "DriverOpts": null
+                }
+            }
+...
+```
+
+
+
+之后启动webapp时同时链接到db容器。
+
+```sh
+$ docker run -p 4567 --name webapp --link redis:db -d -v $PWD/webapp_redis:/opt/webapp taodaling/sinatra
+```
+
+注意这里我们使用了新的选项`--link 容器:主机名`，它会在容器的/etc/hosts文件中增加映射关系。连接到容器webapp上并查看容器的/etc/hosts文件内容。
+
+```sh
+$ docker exec -i -t webapp /bin/bash
+$ cat /etc/hosts
+
+127.0.0.1       localhost
+::1     localhost ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+172.17.0.6      db 4fac7c0d13fa redis
+172.17.0.8      5a495c119fd8
+```
+
+可以发现db、4fac7c0d13fa、redis等都一同绑定在了172.17.0.6上。
+
+由于我们的redis没有绑定到宿主机的端口，因此redis处于十分安全的处境，不会遭遇到攻击。但是容器链接是不能跨宿主机的。
+
+## 杀死容器
+
+接下来我们来停止之前启动的db服务。但是不通过stop，而是选择使用信号。docker kill会向容器的运行进程发送信号，并粗暴地杀死容器。
+
+```sh
+$ docker kill -s SIGKILL redis
+
+redis
+```
+
+用docker stop停止容器，docker会给予容器中的应用程序10s的时间以停止运行，可以用-t选项提供额外的时间。因此docker stop会更加优雅一些。在时限内docker stop会发送SIGTERM信号给容器中的应用，超时后会发送SIGKILL信号。
+
+```sh
+$ docker stop -t 60 redis #60秒内停止容器内应用
+```
+
 # 配置
 
 ## 守护进程
@@ -830,25 +1105,25 @@ $ traceroute google.com
 ### 修改监听地址
 
 ```sh
-docker daemon -H tcp://0.0.0.0:2375
+$ docker daemon -H tcp://0.0.0.0:2375
 ```
 
 上面的命令是一次性的。
 
 ```sh
-export DOCKER_HOST="tcp://0.0.0.0:2375"
+$ export DOCKER_HOST="tcp://0.0.0.0:2375"
 ```
 
 上面的改变会持久到重启。
 
 ```sh
-docker deamon -H unix://home/docker/docker.sock
+$ docker deamon -H unix://home/docker/docker.sock
 ```
 
 可以使用Unix套接字地址，这样就可以仅本地访问服务器。
 
 ```sh
-docker daemon -H tcp://0.0.0.0:2375 -H unix://home/docker/docker.sock
+$ docker daemon -H tcp://0.0.0.0:2375 -H unix://home/docker/docker.sock
 ```
 
 也可以一次性监听多个地址。
@@ -856,7 +1131,7 @@ docker daemon -H tcp://0.0.0.0:2375 -H unix://home/docker/docker.sock
 ### 调试模式
 
 ```sh
-docker deamon -D
+$ docker deamon -D
 ```
 
 已调试模式启动守护进程，这样会输出额外的冗余信息。
