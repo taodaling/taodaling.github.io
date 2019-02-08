@@ -570,6 +570,22 @@ nginx -g "daemon off;"
 
 有了端口号后，你就可以使用容器ip和端口访问服务，也可以通过本地ip和绑定的本地端口访问服务。
 
+## 为镜像创建别名
+
+如果我们在构建镜像时提供了错误的名字或标记。
+
+```sh
+$ docker tag myubuntu taodaling/ubuntu
+```
+
+之后你可以删除原先的镜像。
+
+```sh
+$ docker rmi myubuntu
+```
+
+
+
 ## 推送镜像到Docker Hub
 
 镜像构建完成后，我们可以将它上传到Docker Hub上去，这样其他人就可以使用这个镜像了。

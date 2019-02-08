@@ -102,7 +102,7 @@ Kubernetes会运行你的应用，并向它的组件提供如何找到其余组�
 - Kubelet，与API Server交流并管理它上面的容器。
 - kube-proxy，负责应用组件的网络负载均衡。
 
-## Kubernetes工作流程
+## 了解Kubernetes工作流程
 
 首先你要将你的组件打包到镜像中，并推送到镜像注册中心，之后向API server发送一份描述。
 
@@ -118,4 +118,88 @@ API server处理你的描述信息时，Scheduler将指定的容器分组，基�
 一旦应用被运行后，Kubernetes会持续地确保应用的状态匹配你提供的描述。
 
 在应用启动后，你还可以实时增加或减少应用的副本数目，而Kubernates会对应地部署额外的副本或停止超出的部分。你甚至可以让Kubernetes替你做决定，Kubernetes会根据统计数据自动改变副本数。
+
+# 上手
+
+## 在Docker上运行app
+
+首先你需要按照docker官网的指示安装docker应用。
+
+之后我们创建第一个Node.js应用，它会启动一个服务器，并监听8080端口，向客户端返回自己所在主机的hostname。
+
+创建一个目录app并切换工作目录为app，并在其中创建app.js文件。
+
+```js
+const http = require('http');
+const os = require('os');
+console.log("Kubia server starting...");
+var handler = function(request, response) {
+ console.log("Received request from " + request.connection.remoteAddress);
+ response.writeHead(200);
+ response.end("You've hit " + os.hostname() + "\n");
+};
+var www = http.createServer(handler);
+www.listen(8080);
+```
+
+之后在app目录下创建Dockerfile文件。
+
+```dockerfile
+FROM node:7
+ADD app.js /app.js
+WORKDIR /
+EXPOSE 8080
+ENTRYPOINT ["node", "app.js"]
+CMD []
+```
+
+之后我们以app作为上下文构建Docker镜像。
+
+```sh
+$ docker build -t app .
+```
+
+之后启动我们的服务器镜像。
+
+```sh
+$ docker run -d -p 8080:8080 app
+```
+
+之后访问我们的服务器。
+
+```sh
+$ curl -i -G localhost:8080
+
+HTTP/1.1 200 OK
+Date: Fri, 01 Feb 2019 02:43:39 GMT
+Connection: keep-alive
+Transfer-Encoding: chunked
+
+You've hit 5a1111ad2a1e
+```
+
+## 使用Kubernetes运行app
+
+由于app现在仅本地能访问，我们需要先推送到Docker Hub上。首为app镜像创建别名。
+
+```sh
+$ docker tag app taodaling/app
+```
+
+之后推送镜像。
+
+```sh
+$ docker push taodaling/app
+```
+
+之后我们需要安装Kubernetes。由于使用Kubernetes配置集群比较复杂，因此选用可以快捷支持单机模式的minikube，你可以在它的github主页上找到安装说明[https://github.com/kubernetes/kops](https://github.com/kubernetes/kops)。
+
+之后启动minikube。
+
+```sh
+$ minikube start
+
+```
+
+有了服务器后，我们还需要客户端工具与kubernetes进行交流。在这里你可以找到kubectl的安装说明[https://kubernetes.io/docs/tasks/tools/install-kubectl/](https://kubernetes.io/docs/tasks/tools/install-kubectl/)。
 
