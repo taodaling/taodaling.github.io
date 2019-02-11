@@ -225,7 +225,7 @@ Everything looks great. Please enjoy minikube!
 在国内由于google被墙了，所以可能需要指定梯子的信息。
 
 ```sh
-$ minikube start --docker-env HTTP_PROXY=<your proxy> --docker-env HTTPS_PROXY=<your proxy> --registry-mirror=https://registry.docker-cn.com
+$ minikube start --docker-env HTTP_PROXY=<your proxy> --docker-env HTTPS_PROXY=<your proxy> --registry-mirror=https://registry.docker-cn.com --iso-url https://storage.googleapis.com/minikube/iso/minikube-v0.33.1.iso
 ```
 
 有了服务器后，我们还需要客户端工具与kubernetes进行交流。在这里你可以找到kubectl的安装说明[https://kubernetes.io/docs/tasks/tools/install-kubectl/](https://kubernetes.io/docs/tasks/tools/install-kubectl/)。
