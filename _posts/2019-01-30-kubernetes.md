@@ -198,8 +198,78 @@ $ docker push taodaling/app
 
 ```sh
 $ minikube start
+Starting local Kubernetes v1.13.2 cluster...
+Starting VM...
+Downloading Minikube ISO
+ 181.48 MB / 181.48 MB [============================================] 100.00% 0s
+Getting VM IP address...
+Moving files into cluster...
+Downloading kubeadm v1.13.2
+Downloading kubelet v1.13.2
+Finished Downloading kubeadm v1.13.2
+Finished Downloading kubelet v1.13.2
+Setting up certs...
+Connecting to cluster...
+Setting up kubeconfig...
+Stopping extra container runtimes...
+Starting cluster components...
+Verifying kubelet health ...
+Verifying apiserver health ...
+Kubectl is now configured to use the cluster.
+Loading cached images from config file.
 
+
+Everything looks great. Please enjoy minikube!
+```
+
+在国内由于google被墙了，所以可能需要指定梯子的信息。
+
+```sh
+$ minikube start --docker-env HTTP_PROXY=<your proxy> --docker-env HTTPS_PROXY=<your proxy> --registry-mirror=https://registry.docker-cn.com
 ```
 
 有了服务器后，我们还需要客户端工具与kubernetes进行交流。在这里你可以找到kubectl的安装说明[https://kubernetes.io/docs/tasks/tools/install-kubectl/](https://kubernetes.io/docs/tasks/tools/install-kubectl/)。
 
+查看k8s集群状态。
+
+```sh
+$ kubectl cluster-info
+Kubernetes master is running at https://192.168.99.101:8443
+KubeDNS is running at https://192.168.99.101:8443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+```
+
+打开k8s的控制面板。
+
+```sh
+$ minikube dashboard
+Enabling dashboard ...
+Verifying dashboard health ...
+Launching proxy ...
+Verifying proxy health ...
+Opening http://127.0.0.1:10990/api/v1/namespaces/kube-system/services/http:kubernetes-dashboard:/proxy/ in your default browser...
+```
+
+之后我们利用k8s启动容器。
+
+```sh
+$ kubectl run kubia --image=taodaling/kubia --port=8080 --generator=run-pod/v1
+pod/kubia created
+```
+
+这样你实际上就基于镜像taodaling/kubia启动了自己的容器。
+
+你可能希望列举出所有运行的容器，比如`kubectl get containers`，但是k8s并不会直接暴露单个容器，它使用了多个同地址容器的概念，这样一组容器称为豆荚（pod）。豆荚是一组紧密关联的容器，它们总是会在同一个工作节点运行，并处于相同的Linux命名空间下。每一个pod都像一个分离的逻辑机器一样，拥有自己的IP，域名，进程等。只有在同一个pod下才会有这样的待遇，属于不同pod的两个容器，即使运行在同一个工作节点上，也会像运行在不同的机器上一样无法直接交互。
+
+![](https://raw.githubusercontent.com/taodaling/assets/master/images/2019-01-30-kubernetes/pod.PNG)
+
+你可以拉取pod列表。
+
+```sh
+$ kubectl get pods
+NAME          READY   STATUS         RESTARTS   AGE
+kubia-2lhvt   0/1     ErrImagePull   0          99m
+```
+
+类似的，你可以用`kubectl describe pod`来查看一个pod的详细信息。
