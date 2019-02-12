@@ -258,6 +258,8 @@ $ kubectl run kubia --image=taodaling/kubia --port=8080 --generator=run-pod/v1
 pod/kubia created
 ```
 
+上面命令首先发送REST风格HTTP请求到Kubernetes的API服务器，再集群中创建一个新的ReplicationController对象，之后新建的ReplicationController对象创建了一个新的豆荚，这个豆荚之后被Scheduler调度到某个工作节点上，工作节点接到调度命令后，利用docker基于镜像启动容器。
+
 这样你实际上就基于镜像taodaling/kubia启动了自己的容器。
 
 你可能希望列举出所有运行的容器，比如`kubectl get containers`，但是k8s并不会直接暴露单个容器，它使用了多个同地址容器的概念，这样一组容器称为豆荚（pod）。豆荚是一组紧密关联的容器，它们总是会在同一个工作节点运行，并处于相同的Linux命名空间下。每一个pod都像一个分离的逻辑机器一样，拥有自己的IP，域名，进程等。只有在同一个pod下才会有这样的待遇，属于不同pod的两个容器，即使运行在同一个工作节点上，也会像运行在不同的机器上一样无法直接交互。
@@ -268,8 +270,84 @@ pod/kubia created
 
 ```sh
 $ kubectl get pods
-NAME          READY   STATUS         RESTARTS   AGE
-kubia-2lhvt   0/1     ErrImagePull   0          99m
+NAME          READY   STATUS    RESTARTS   AGE
+kubia-2lhvt   1/1     Running   1          21h
 ```
 
 类似的，你可以用`kubectl describe pod`来查看一个pod的详细信息。
+
+每个pod都有自己的IP地址，但是这地址是集群内部分配的地址，无法从外部直接通过该地址访问。你需要通过一个服务对象才能在集群外部访问pod。首先你需要创建一个特殊的LoadBalancer类型服务，并通过负载均衡服务连接到集群内部的pod中。
+
+```sh
+$ kubectl expose rc kubia --type=LoadBalancer --name kubia-http
+service/kubia-http exposed
+```
+
+这里rc是ReplicationController的缩写。
+
+可以通过`kubectl get services`查看我们创建的服务对象。
+
+```sh
+$ kubectl get services
+NAME         TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+kubernetes   ClusterIP      10.96.0.1        <none>        443/TCP          30h
+kubia-http   LoadBalancer   10.109.153.192   <pending>     8080:32111/TCP   2m2s
+```
+
+由于我们使用的是minikube，所以是无法得到EXTERNAL-IP的，我们需要通过下面的命令获得IP和端口。
+
+```sh
+$ minikube service kubia-http
+```
+
+重新整理一下流程。我们首先利用kubectl run命令创建了一个ReplicationController，而ReplicationController则为我们创建了实际的Pod对象。要让Pod变得可以从外部访问，你需要告诉Kubernetes将这个ReplicationController管理的所有pods作为单独的服务暴露。
+
+- Pod：pod是一组紧密关联的容器，它们运行在相同的工作节点上，拥有独立的IP地址和域名。
+- ReplicationController：ReplicationController负责维持pod的副本数目达到预期值。
+- Service：由于Pod死亡重启后会得到不同的ip地址，所以通过拥有不变IP地址的Service暴露服务，Service会将连接交付给某个提供服务的Pod。
+
+下面我们来观察我们已有的ReplicationController
+
+```sh
+$ kubectl get replicationcontrollers
+NAME    DESIRED   CURRENT   READY   AGE
+kubia   1         1         1       28h
+```
+
+上面desired属性字段表示副本的期望数目。如果在使用kubelet run命令时没有指定则取默认值1。
+
+你可以在ReplicationController创建后调整副本期望数。
+
+```sh
+$ kubectl scale rc kubia --replicas=3
+replicationcontroller/kubia scaled
+```
+
+如果你非常在意每个pod运行在哪个工作节点上的话，可以使用下面命令。
+
+```sh
+$ kubectl get pods -o wide
+NAME          READY   STATUS    RESTARTS   AGE   IP           NODE       NOMINATED NODE   READINESS GATES
+kubia-2lhvt   1/1     Running   1          28h   172.17.0.4   minikube   <none>           <none>
+kubia-5psld   1/1     Running   0          16m   172.17.0.6   minikube   <none>           <none>
+kubia-cmhd6   1/1     Running   0          16m   172.17.0.7   minikube   <none>           <none>
+```
+
+或者
+
+```sh
+$ kubectl describe pod kubia-2lhvt
+Name:               kubia-2lhvt
+Namespace:          default
+Priority:           0
+PriorityClassName:  <none>
+Node:               minikube/10.0.2.15
+Start Time:         Mon, 11 Feb 2019 12:48:32 +0800
+Labels:             run=kubia
+Annotations:        <none>
+Status:             Running
+IP:                 172.17.0.4
+Controlled By:      ReplicationController/kubia
+```
+
+## 在Kubernetes上运行容器
