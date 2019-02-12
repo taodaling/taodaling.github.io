@@ -254,7 +254,7 @@ Opening http://127.0.0.1:10990/api/v1/namespaces/kube-system/services/http:kuber
 之后我们利用k8s启动容器。
 
 ```sh
-$ kubectl run kubia --image=taodaling/kubia --port=8080 --generator=run-pod/v1
+$ kubectl run kubia --image=taodaling/kubia --port=8080 --generator=run/v1
 pod/kubia created
 ```
 
@@ -350,4 +350,296 @@ IP:                 172.17.0.4
 Controlled By:      ReplicationController/kubia
 ```
 
-## 在Kubernetes上运行容器
+## 理解Pod
+
+Pod是Kubernetes的基石，就像容器之于docker。你可能会好奇为什么Kubernetes要使用pod这个概念而非直接使用容器。我们可以将一组容器中运行的进程集中在一个容器中运行，但是这与容器的哲学相悖，每个容器中都应该仅运行一个用户进程，否则你就必须自己实现进程的重启机制，而每个容器仅运行一个用户进程，就可以将容器的存活交由Kubernetes负责。
+
+存在于同一个Pod中的容器，它们并不像大多数容器一样完全隔离，它们会选择共享网络、UTS、IPC等命名空间。但是由于容器本身的设计使得容器之间无法共享文件系统，但是可以使用卷的概念来共享一部分的目录。也由于Pod中的容器共享了网络命名空间，所以容器之间可能会存在端口冲突。同样Pod中的容器共享相同的网络接口回路（loopback network interface），因此你可以在Pod中通过localhost与其它容器交流。
+
+你应该将pod视作一个单独的机器，但是每个机器上都仅运行一个应用。每个pod仅包含紧密关联的组件。
+
+你不应该将许多不必运行在相同机器上的组件放在一个pod中，比如前端服务器和后端服务器，原因很简单，同一个pod中意味着pod中的组件无法部署在不同的机器上，这样就无法充分利用计算能力，并且一个pod中包含大量的组件会导致很难找到能提供充足计算能力的工作节点。并且pod是kubernetes中的最小伸缩单位，这意味着pod中的不同组件会拥有相同的副本数。但是一般前端服务器和后端服务器的吞吐能力往往是不同的，因此，不应该拥有相同的副本数。
+
+## 通过配置文件创建POD
+
+Kubernetes支持使用配置文件来创建pod，使用配置文件的好处在于可以使用所有的属性和kubernetes的特性。
+
+之前我们已经启动了一些pod了，现在让我们看看它们对应的yaml格式的配置文件是怎样和的。
+
+```sh
+$ kubectl get pod kubia-f9fgt -o yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: "2019-02-12T11:03:28Z"
+  generateName: kubia-
+  labels:
+    run: kubia
+  name: kubia-f9fgt
+  namespace: default
+  ownerReferences:
+  - apiVersion: v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: ReplicationController
+    name: kubia
+    uid: d3827062-2eb5-11e9-9154-080027a39588
+  resourceVersion: "6216"
+  selfLink: /api/v1/namespaces/default/pods/kubia-f9fgt
+  uid: d38383aa-2eb5-11e9-9154-080027a39588
+spec:
+  containers:
+  - image: taodaling/kubia
+    imagePullPolicy: Always
+    name: kubia
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: default-token-b22sj
+      readOnly: true
+  dnsPolicy: ClusterFirst
+  enableServiceLinks: true
+  nodeName: minikube
+  priority: 0
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext: {}
+  serviceAccount: default
+  serviceAccountName: default
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+    tolerationSeconds: 300
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  volumes:
+  - name: default-token-b22sj
+    secret:
+      defaultMode: 420
+      secretName: default-token-b22sj
+status:
+  conditions:
+  - lastProbeTime: null
+    lastTransitionTime: "2019-02-12T11:03:28Z"
+    status: "True"
+    type: Initialized
+  - lastProbeTime: null
+    lastTransitionTime: "2019-02-12T11:03:34Z"
+    status: "True"
+    type: Ready
+  - lastProbeTime: null
+    lastTransitionTime: "2019-02-12T11:03:34Z"
+    status: "True"
+    type: ContainersReady
+  - lastProbeTime: null
+    lastTransitionTime: "2019-02-12T11:03:28Z"
+    status: "True"
+    type: PodScheduled
+  containerStatuses:
+  - containerID: docker://3ae7c740a654cec94b2862af7a67fc036484f674464d8ff8f0b8549e4ed48e03
+    image: taodaling/kubia:latest
+    imageID: docker-pullable://taodaling/kubia@sha256:6442839842ddc7998c90becf14e0d456ae3d6e892363a52fb9c45386dc95aa01
+    lastState: {}
+    name: kubia
+    ready: true
+    restartCount: 0
+    state:
+      running:
+        startedAt: "2019-02-12T11:03:33Z"
+  hostIP: 10.0.2.15
+  phase: Running
+  podIP: 172.17.0.4
+  qosClass: BestEffort
+  startTime: "2019-02-12T11:03:28Z"
+```
+
+别被上面冗长的配置文件所吓倒，仅保留必要部分后还是非常简短的。我们先创建一个新文件kubia-manual.yml。
+
+```yaml
+apiVersion: v1 #描述符满足V1版本的Kubernetes API
+kind: Pod #配置文件用于描述一个Pod
+metadata:
+  name: kubia-manual #这个Pod的名字
+spec:
+  containers:
+  - image: taodaling/kubia #用来创建容器的镜像
+    name: kubia #容器的名字
+    ports:
+    - containerPort: 8080 #应用监听的端口
+      protocol: TCP #端口协议
+```
+
+是不是简单多了。
+
+在配置文件中所写的端口信息仅仅是起提示作用而已，忽略它们不会带来任何影响。只要一个容器监听0.0.0.0地址的某个端口，其它的pod就能连接上它的，即使这个端口没有出现在配置文件中。但是在配置文件中显式声明端口并非毫无意义，它可以让使用者容易地找到需要容器提供服务的端口，并且显示指定端口信息允许你为端口分配一个别名。
+
+要查看一个属性的含义，以及包含的子属性，可以使用下面命令。
+
+```sh
+$ kubectl explain pods
+KIND:     Pod
+VERSION:  v1
+
+DESCRIPTION:
+     Pod is a collection of containers that can run on a host. This resource is
+     created by clients and scheduled onto hosts.
+
+FIELDS:
+   apiVersion   <string>
+     APIVersion defines the versioned schema of this representation of an
+     object. Servers should convert recognized schemas to the latest internal
+     value, and may reject unrecognized values. More info:
+     https://git.k8s.io/community/contributors/devel/api-conventions.md#resources
+
+   kind <string>
+     Kind is a string value representing the REST resource this object
+     represents. Servers may infer this from the endpoint the client submits
+     requests to. Cannot be updated. In CamelCase. More info:
+     https://git.k8s.io/community/contributors/devel/api-conventions.md#types-kinds
+
+......
+```
+
+要查看子属性
+
+```sh
+$ kubectl explain pods.spec
+KIND:     Pod
+VERSION:  v1
+
+RESOURCE: spec <Object>
+
+DESCRIPTION:
+     Specification of the desired behavior of the pod. More info:
+     https://git.k8s.io/community/contributors/devel/api-conventions.md#spec-and-status
+
+     PodSpec is a description of a pod.
+
+FIELDS:
+   activeDeadlineSeconds        <integer>
+     Optional duration in seconds the pod may be active on the node relative to
+     StartTime before the system will actively try to mark it failed and kill
+     associated containers. Value must be a positive integer.
+......
+```
+
+接下来从配置文件中启动pod
+
+```sh
+$ kubectl create -f kubia-manual.yml
+pod/kubia-manual created
+```
+
+`kubectl create -f`命令用于创建创建配置文件中指定的所有资源（不仅仅是pods）。
+
+## 查看日志
+
+容器化应用一般会将日志输出到标准输出流（stdout）和标准错误流（stderr）而非日志文件，也因此允许用户直接查看日志。
+
+在kubernetes中你可以通过ssh直接登录允许容器的工作节点，并用docker logs命令查看容器输出。
+
+```sh
+$ docker logs <container id>
+```
+
+但是kubernetes提供了一种更加简单的方式来直接查看一个pod的日志。
+
+```sh
+$ kubectl logs kubia-manual
+Kubia server starting...
+```
+
+容器日志会每天在日志达到10M时自动滚动，而kubectl logs命令仅显示最后一次滚动后保留的日志。
+
+如果pod中包含多个容器时，那你在获取日志时需要通过`-c <容器名>`显式指定从哪个容器中获取日志。
+
+```sh
+$ kubectl logs kubia-manual -c kubia
+```
+
+## 端口转发
+
+kubernetes支持端口转发，允许在本地机器和pod之间建立转发关系。
+
+```sh
+$ kubectl port-forward kubia-manual 8888:8080
+Forwarding from 127.0.0.1:8888 -> 8080
+Forwarding from [::1]:8888 -> 8080
+```
+
+之后当你访问localhost:8888就可以访问kubia-manual提供的服务了。
+
+端口转发可以帮助你直接测试你的服务。
+
+## 通过标签组织pods
+
+现在你的集群中仅运行了两个pods，但是当pods越来越多时，就越来越需要对pods进行细分。我们需要一种基于某种规则进行分组的方式，分组后，我们可以更清晰地得知每个pod的用途。有了分组后，我们也可以对同组所有pods进行某种操作，而非一一执行。
+
+标签是一种简单但是非常强力的一种手段，它不仅可以对pods进行分组，还可以对kubernetes中的所有资源进行分组。一个标签是加在资源上的任意键值对。之后就可以通过标签集合对资源进行过滤和筛选。一个资源可以有多个不同标签，这些标签的关键字互异。一般你在创建资源的时候加上标签，但是也可以在资源创建后再加标签。
+
+每个pod都有两个标签。
+
+- app，指定pod属于哪个组件、微服务、应用。
+- rel，指定pod的发现版本，比如stable、beta、canary。
+
+接下来我们修改配置文件来增加额外的标签。
+
+```yaml
+apiVersion: v1 #描述符满足V1版本的Kubernetes API
+kind: Pod #配置文件用于描述一个Pod
+metadata:
+  name: kubia-manual-v2 #这个Pod的名字
+  labels:
+    creation_method: manual
+    env: prod
+spec:
+  containers:
+  - image: taodaling/kubia #用来创建容器的镜像
+    name: kubia #容器的名字
+    ports:
+    - containerPort: 8080 #应用监听的端口
+      protocol: TCP #端口协议
+```
+
+之后可以查看标签信息。
+
+```sh
+$ kubectl get pods --show-labels
+NAME              READY   STATUS    RESTARTS   AGE     LABELS
+kubia-f9fgt       1/1     Running   0          3h23m   run=kubia
+kubia-manual      1/1     Running   0          27s     <none>
+kubia-manual-v2   1/1     Running   0          2m17s   creation_method=manual,env=prod
+```
+
+除了列出所有标签，你也可以仅查看指定的标签。
+
+```sh
+$ kubectl get pods -L creation_method,env
+NAME              READY   STATUS    RESTARTS   AGE     CREATION_METHOD   ENV
+kubia-f9fgt       1/1     Running   0          3h27m
+kubia-manual      1/1     Running   0          4m22s
+kubia-manual-v2   1/1     Running   0          6m12s   manual            prod
+```
+
+你也可以直接追加标签。
+
+```sh
+$ kubectl label pods kubia-manual creation_method=manual
+pod/kubia-manual labeled
+```
+
+要修改已有标签的值，需要加上`--overwrite`选项。
+
+```sh
+$ kubectl label pods kubia-manual creation_method=manual-v2 --overwrite
+```
+
