@@ -594,20 +594,20 @@ Forwarding from [::1]:8888 -> 8080
 接下来我们修改配置文件来增加额外的标签。
 
 ```yaml
-apiVersion: v1 #描述符满足V1版本的Kubernetes API
-kind: Pod #配置文件用于描述一个Pod
+apiVersion: v1
+kind: Pod
 metadata:
-  name: kubia-manual-v2 #这个Pod的名字
+  name: kubia-manual-v2
   labels:
     creation_method: manual
     env: prod
 spec:
   containers:
-  - image: taodaling/kubia #用来创建容器的镜像
-    name: kubia #容器的名字
+  - image: taodaling/kubia
+    name: kubia
     ports:
-    - containerPort: 8080 #应用监听的端口
-      protocol: TCP #端口协议
+    - containerPort: 8080
+      protocol: TCP
 ```
 
 之后可以查看标签信息。
@@ -643,3 +643,296 @@ pod/kubia-manual labeled
 $ kubectl label pods kubia-manual creation_method=manual-v2 --overwrite
 ```
 
+## 刻画应用需求
+
+虽然再k8s中，我们要尽量不关心应用和工作节点之间关联关系从而避免偶尔，并由k8s为我们做出最优的决策，但是还是存在一些特殊情况。比如你希望你的应用能使用SSD，或者你的应用可以使用GPU加速，这些情况都对工作节点提出了需求。
+
+前面已经提过，我们可以为k8s中所有的资源添加标签，我们可以利用标签来描述一个节点。
+
+```sh
+$ kubectl label node minikube gpu=true
+node/minikube labeled
+```
+
+之后查看节点标签。
+
+```sh
+$ kubectl get nodes -L gpu
+NAME       STATUS   ROLES    AGE    VERSION   GPU
+minikube   Ready    master   2d1h   v1.13.2   true
+```
+
+利用标签选择器可以仅查看所有拥有指定标签的节点。
+
+```sh
+$ kubectl get nodes -l gpu=true
+NAME       STATUS   ROLES    AGE    VERSION
+minikube   Ready    master   2d1h   v1.13.2
+```
+
+为节点增加标签刻画了节点特性后，我们接下来刻画应用的需求。创建kubia-gpu.yml文件。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubia-gpu
+spec:
+  nodeSelector:
+    gpu: "true"
+  containers:
+  - image: taodaling/kubia
+    name: kubia
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+```
+
+由于每个节点都有自己唯一的`kubernetes.io/hostname`标签，因此你可以利用这个标签将应用调度到一个工作节点上去，但是这样也就放弃了kubernetes的优势。
+
+## 使用注解
+
+k8s除了提供标签外，还提供了注解。注解与标签类似，也是以键值对的形式存在，但是区别在于，注解没有选择器，但是注解支持更长的长度（256KB）。注解一般用于内部字段的演化，一开始官方会以注解形式提供新的字段，如果这个字段被广泛接受，则官方会加入字段，并deprecate原来的注解。
+
+增加注解非常简单。
+
+```sh
+$ kubectl annotate pod kubia-gpu mycompany.com/someannotation="foo bar"
+pod/kubia-gpu annotated
+```
+
+要查看pod的annotations，有两种方法。
+
+```sh
+$ kubectl get pod kubia-gpu -o yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    mycompany.com/someannotation: foo bar
+  creationTimestamp: "2019-02-13T03:36:21Z"
+  name: kubia-gpu
+  namespace: default
+  resourceVersion: "77813"
+  selfLink: /api/v1/namespaces/default/pods/kubia-gpu
+  uid: 87a2599f-2f40-11e9-b0c4-0800279f3491
+......
+```
+
+还有一种方法是。
+
+```sh
+$ kubectl describe pod kubia-gpu
+Name:               kubia-gpu
+Namespace:          default
+Priority:           0
+PriorityClassName:  <none>
+Node:               minikube/10.0.2.15
+Start Time:         Wed, 13 Feb 2019 11:36:21 +0800
+Labels:             <none>
+Annotations:        mycompany.com/someannotation: foo bar
+......
+```
+
+## 使用命名空间
+
+K8s提供了命名空间，用于对资源进行分组。不同命名空间的资源允许重名。你可以按照租户划分命名空间，也可以根据生产、开发、QA环境来划分命名空间，这些都由你决定。资源名字只需要保证再命名空间内唯一即可，不同命名空间下可以存在重名资源。虽然大部分资源都可以存放于命名空间下，但是还是有少数不支持命名空间，比如节点，节点始终是全局的，不属于任何命名空间。
+
+查看已有的命名空间。
+
+```sh
+$ kubectl get namespaces
+NAME          STATUS   AGE
+default       Active   2d3h
+kube-public   Active   2d3h
+kube-system   Active   2d3h
+```
+
+至今为止，你只操作过default命名空间下的资源。除了default外，列表中还列出了另外两个命名空间。下面我们来看看kube-system下的pod。
+
+```sh
+$ kubectl get pods --namespace kube-system
+NAME                                   READY   STATUS    RESTARTS   AGE
+coredns-86c58d9df4-8kv5b               1/1     Running   2          2d3h
+coredns-86c58d9df4-wn7vl               1/1     Running   2          2d3h
+etcd-minikube                          1/1     Running   0          3h48m
+kube-addon-manager-minikube            1/1     Running   2          2d3h
+kube-apiserver-minikube                1/1     Running   0          3h48m
+kube-controller-manager-minikube       1/1     Running   2          2d3h
+kube-proxy-m2v2b                       1/1     Running   0          3h47m
+kube-scheduler-minikube                1/1     Running   2          2d3h
+kubernetes-dashboard-ccc79bfc9-bc7qm   1/1     Running   4          2d2h
+storage-provisioner                    1/1     Running   4          2d3h
+```
+
+上面的pod都是属于k8s本身。k8s通过命名空间将系统的pod与用户的pod分离开来，这样不仅可以保持default命名空间的简洁，还能避免用户误删系统pod。
+
+命名空间还能在多个用户操作k8s时避免命名冲突，每个用户仅在自己的命名空间下执行操作。并且命名空间可以控制用户的访问权限，甚至于可以为每个用户分配各自的计算资源。
+
+接下来我们通过配置文件创建命名空间，首先建立文件custom-namespace.yml。
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: custom-namespace
+```
+
+之后创建命名空间。
+
+```sh
+$ kubectl create -f custom-namespace.yml
+namespace/custom-namespace created
+```
+
+当然要为每个命名空间都建立一个文件显得很繁琐，我们可以直接使用命令行就可以创建命名空间。
+
+```sh
+$ kubectl create namespace custom-namespace2
+namespace/custom-namespace2 created
+```
+
+至于在命名空间下创建pod，有两种方式。一种是直接在配置文件的metadata.namespace中写死，还有一种就是增加`-n <命名空间>`选项。
+
+```sh
+$ kubectl create -f kubia-gpu.yml -n custom-namespace
+pod/kubia-gpu created
+```
+
+如果你创建pod时没有显式指定命名空间，则会使用default命名空间。
+
+注意命名空间并没有提供任何实际上的隔离，比如两个不同命名空间下的pod可以通过彼此的内部IP地址自由交流而不受命名空间的影响。
+
+## 停止并移除pods
+
+现在我们已经在default命名空间和custom-namespace下创建了不少的pods，但是它们已经不再被需要了，我们接下来要移除它们。
+
+```sh
+$ kubectl delete pod kubia-gpu
+pod "kubia-gpu" deleted
+```
+
+要删除一个pod，k8s首先终止属于该pod的所有容器。k8s会向这些容器进程发送一个SIGTERM信号，并等待30秒时间，如果超时还没有关闭，那么会发送SIGKILL信号。
+
+除了手动指定名字删除pod外，你还可以使用标签选择器来选择被删除的pod。
+
+```sh
+$ kubectl delete pods -l creation_method=manual
+pod "kubia-manual" deleted
+pod "kubia-manual-v2" deleted
+```
+
+你也可以选择直接删除命名空间，删除命名空间的同时会删除命名空间下所有的pod。
+
+```sh
+$ kubectl delete namespace custom-namespace
+namespace "custom-namespace" deleted
+```
+
+现在你应该就仅剩下通过kubectl run启动的pod了。
+
+```sh
+$ kubectl get pods
+NAME          READY   STATUS    RESTARTS   AGE
+kubia-5psld   1/1     Running   1          22h
+```
+
+你可以通过传递--all而非pod名来删除当前命名空间下所有的pods。
+
+```sh
+$ kubectl delete pods --all
+pod "kubia-5psld" deleted
+```
+
+接下来再看看pod的状态。
+
+```sh
+$ kubectl get pods
+NAME          READY   STATUS    RESTARTS   AGE
+kubia-87w58   1/1     Running   0          97s
+```
+
+之前的kubia-5psld被删除了，但是又一个新的pod被启动了。还记得一开始我们通过kubectl run创建pod时，并不是直接创建pod，而是通过创建一个副本控制器之后由副本控制器负责创建pod。要删除这个pod，我们还需要删除管理它的副本控制器。
+
+```sh
+$ kubectl delete all --all
+pod "kubia-87w58" deleted
+replicationcontroller "kubia" deleted
+service "kubernetes" deleted
+service "kubia-http" deleted
+```
+
+上面命令中第一个all表示删除所有类型的资源，第二个all表示删除全部而不指定名字。
+
+## 副本和其它控制器
+
+至今为止，我们学会了如何手动创建、监控、管理pod，但是再真实世界中，你可能只是希望你的pod能保持运行，并自动保证健康的副本数，而无需任何人工介入。要实现这个目标，你不能再直接创建pods，取而代之的是你要创建pod的管理者，比如副本控制器或Deployments，而它们将负责pod的生命周期。
+
+当你创建了不被管理的pod，这个pod会分配到某个工作节点上。kubernetes会监控这些容器并在容器失败后自动重启它们，但是一旦整个节点损害，那么节点上运行的所有不受管理的pod都将会丢失并不再被重启。
+
+在pod调度到一个节点上后，该节点上的kubelet服务会启动pod，并保证在pod存在的期间pod中的容器始终存活。一旦容器的主进程挂了，kubelet会重启该容器。
+
+但是上面的方案还是不保险，因为存在容器不能提供服务但是却依旧存活的情况，比如抛出内存溢出错误的JVM会依旧存活，但是不能再保证功能。这提示我们需要应用在自己失去能力的时候杀死自己。但是如果错误是程序逻辑，比如死循环或死锁，我们无法正确的自我制裁，而k8s也不能察觉到问题发生。
+
+k8s提供了存活探测的方式来检查一个容器是否能正常工作。k8s会定期执行探测并在探测失败的情况下重启容器。k8s可以以下面的一种机制来探测一个容器：
+
+- HTTP GET探测：向容器的地址以及你指定好的端口和路径发送HTTP GET请求，如果收到响应并且响应码不意味着错误（2xx或3xx），那就认为容器正常工作，否则认为容器已经失败。
+- TCP套接字探测：尝试向容器的某个端口发起TCP连接。如果连接成功建立就认为容器正常工作，否则认为容器失败。
+- Exec探测：在容器中执行任意命令并校验命令的返回值，如果返回值为0，则容器正常工作，否则认为容器失败。
+
+由于我们的kubia太过简单，因此有生之年可能都很难看到它出什么问题。我们修改代码，使得它只能正常服务5次，5次后就只会返回500内部服务器异常。 先创建文件kubia-liveness.yml。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kubia-liveness
+spec:
+  containers:
+  - image: luksa/kubia-unhealthy
+    name: kubia
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 8080
+```
+
+之后创建应用并不断访问应用即可。
+
+如果想要知道一个容器是因为什么原因宕机，用`kubectl logs`命令只能拉去到重启后新容器的日志，而无法看到之前宕机容器的日志。你可以使用`--previous`选项查看该容器重启之前的所有日志。
+
+利用describe命令可以查看到许多探测相关的信息。
+
+```sh
+$ kubectl describe pods kubia-liveness
+......
+Containers:
+  kubia:
+......
+    State:          Waiting
+      Reason:       CrashLoopBackOff
+    Last State:     Terminated
+      Reason:       Error
+      Exit Code:    137
+      Started:      Wed, 13 Feb 2019 17:32:42 +0800
+      Finished:     Wed, 13 Feb 2019 17:34:29 +0800
+    Ready:          False
+    Restart Count:  9
+    Liveness:       http-get http://:8080/ delay=0s timeout=1s period=10s #success=1 #failure=3
+......
+Events:
+  Type     Reason     Age                   From               Message
+  ----     ------     ----                  ----               -------
+  Normal   Scheduled  29m                   default-scheduler  Successfully assigned default/kubia-liveness to minikube
+  Normal   Created    22m (x3 over 26m)     kubelet, minikube  Created container
+  Normal   Started    22m (x3 over 26m)     kubelet, minikube  Started container
+  Normal   Pulling    20m (x4 over 29m)     kubelet, minikube  pulling image "luksa/kubia-unhealthy"
+  Warning  Unhealthy  19m (x11 over 25m)    kubelet, minikube  Liveness probe failed: HTTP probe failed with statuscode: 500
+  Normal   Pulled     14m (x7 over 26m)     kubelet, minikube  Successfully pulled image "luksa/kubia-unhealthy"
+  Warning  BackOff    9m36s (x19 over 16m)  kubelet, minikube  Back-off restarting failed container
+  Normal   Killing    4m38s (x9 over 24m)   kubelet, minikube  Killing container with id docker://kubia:Container failed liveness probe.. Container will be killed and recreated.
+```
+
+可以看到liveness刻画了探测的属性，Exit Code表示上一次退出发送的信号+128，Events中显示了与pod相关的各种事件。liveness的delay属性比较重要，需要设置得足够大（保证app正常启动），在delay后将开始执行第一次探测。failure=3表示连续失败三次就认为容器不可用。
+
+在生产环境中，你始终应该为容器定义一个存活探测，只有这样k8s才能确认容器的状态并采取相应的措施。之前我们使用的探测地址是`/`，但是一般来说你需要提供一个特殊的URL地址，比如`/health`，而当容器内服务器接受到这样的请求时，应该检查所有容器内关键的模块以确保它们都能正常工作。并且还要确保这个地址不需要额外的认证，否则探测会失败。也要记住仅检查服务器自身内部的模块，而不能被外部依赖所影响，比如服务器不该检查数据库是否能正常访问，因为重启服务器对于修复数据库是没有任何意义的。并且要保证检查要足够轻量，因为k8s默认仅提供一秒的超时时间，并且由于检查会频繁发生，因此可能会带来可观的CPU资源浪费。
