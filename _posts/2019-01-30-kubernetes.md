@@ -1003,3 +1003,108 @@ $ kubectl edit replicationcontroller kubia
 ```
 
 上面的命令会打开你的默认编辑器编辑副本控制器对应的yaml定义文件。关闭编辑器后你的修改就会即使上传并生效。
+
+要修改副本控制器的副本预期数，同样非常简单，你可以通过编辑控制器的定义文件，也可以借助scale命令。
+
+```sh
+$ kubectl scale rc kubia --replicas=3
+```
+
+当你用kubectl delete删除副本控制器时会连带将它管理的所有pod也一同删除。但是考虑到pod与副本控制器并非一个整体，因此k8s提供了仅删除副本控制器而不影响pod的方式。
+
+```sh
+$ kubectl delete rc kubia --cascade=false
+replicationcontroller "kubia" deleted
+```
+
+## 副本集合
+
+最初的时候，副本控制器是k8s中仅有的可以创建副本和重新调度pod的模块，但是后来引入了相似的一种资源，称为副本集合。可以认为副本集合是新一代的副本控制器并且最终将取代副本控制器。
+
+副本集合与副本控制器基本一致，但是副本集合提供了比副本控制器的标签选择器更灵活的pod选择器。标签选择器仅过滤出包含所有指定标签的pod，但是副本集合的选择器允许我们过滤缺少某个标签的pods，或包含某个特定标签关键字的pods。
+
+让我们创建一个副本集合来收养之前因为删除副本控制器而带来的孤儿pods。先建立一个名为kubia-replicaset.yml的文件。
+
+```yaml
+apiVersion: apps/v1beta2
+kind: ReplicaSet
+metadata:
+  name: kubia
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kubia
+  template:
+    metadata:
+      labels:
+        app: kubia
+    spec:
+      containers:
+      - name: kubia
+        image: taodaling/kubia
+```
+
+在这里我们使用的apiVersion是apps/v1beta2 ，而非v1。这是因为v1接口不支持副本集合，但是apps/v1beta2 支持副本集合。一般apiVersion的格式为`group/api`，group表示api的分组，但是大部分的接口都处于k8s的核心API组下，而如果组不填，则缺省为核心API组。
+
+用create命令创建副本集合后，拉去pod状态。
+
+```sh
+$ kubectl get pods
+NAME          READY   STATUS        RESTARTS   AGE
+kubia-5fnfc   1/1     Terminating   0          34m
+kubia-7qs7d   1/1     Terminating   0          34m
+kubia-8zd4h   1/1     Terminating   0          34m
+kubia-9x4cw   1/1     Running       0          36m
+kubia-b9g2g   1/1     Terminating   0          34m
+kubia-dtdbn   1/1     Running       0          36m
+kubia-fvzsp   1/1     Running       0          36m
+kubia-l9pbr   1/1     Terminating   0          34m
+kubia-mnt6s   1/1     Terminating   0          34m
+kubia-v2wfp   1/1     Terminating   0          34m
+```
+
+可以看到副本集合中额外的7个副本都在被停止。查看我们的副本集合。
+
+```sh
+$ kubectl get replicasets
+NAME    DESIRED   CURRENT   READY   AGE
+kubia   3         3         3       94s
+```
+
+可以看到我们的副本集合和副本控制器并没有太大区别，除了选择器一块。副本集合当前使用的matchLabels的表达能力依旧欠缺，下面我们用另外一种方式表达相同的含义。
+
+```yaml
+selector:
+  matchExpressions:
+  - key: app
+    operator: In
+    values:
+    - kubia
+```
+
+如上所示，每个表达式一定包含一个key，operator，以及可选的values属性。接下来你会看到总共四种operator。
+
+- In，标签值出现在values中
+- NotIn，标签值不出现在values中
+- Exists，标签关键字出现
+- DoesNotExist，标签关键字不出现
+
+如果在一个matchExpressions中出现多个表达式，那么必须所有表达式全真才认为是真。如果你还指定了matchLabels，那么必须matchExpressions和matchLabel全真才认为是真。
+
+要记住你始终应该使用副本集合而非副本控制器，接下来我们删除这个副本集合以及它麾下的pods。
+
+```sh
+$ kubectl delete rs kubia
+replicaset.extensions "kubia" deleted
+```
+
+## 守护集合
+
+副本控制器和副本集合都是用于在集群中部署特定数目的副本实例。但是我们还会遇到另外一种需求，在每个节点上运行一个pod。比如你的pod是节点的资源监控器或日志收集器。
+
+在不使用k8s的情况下，一般是注入到系统的启动脚本中，并于系统一同启动。而k8s提供了守护集合的概念。守护集合确保每一个工作节点上都运行pod的一份副本。当一个节点从集群移除，守护集合会终止上面自己管理的pod，当一个节点加入集群，守护集合会立即在节点上按照模板创建一个新的副本。
+
+默认情况下，守护集合会在所有节点上运行pod，但是你依旧可以通过指定节点选择器来保证pod仅运行在满足条件的节点上。
+
+一些节点可以标记为不可调度，这样调度器就不会把pod分配给它们。但是由于这是通过调度器实现节点不可调度的，而守护集合是直接跳过调度器，因此守护集合依旧会把pod部署在不可调度的节点上。通常这样是对的，因为守护集合一般运行的都是系统服务。
