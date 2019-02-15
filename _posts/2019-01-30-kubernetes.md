@@ -1108,3 +1108,157 @@ replicaset.extensions "kubia" deleted
 默认情况下，守护集合会在所有节点上运行pod，但是你依旧可以通过指定节点选择器来保证pod仅运行在满足条件的节点上。
 
 一些节点可以标记为不可调度，这样调度器就不会把pod分配给它们。但是由于这是通过调度器实现节点不可调度的，而守护集合是直接跳过调度器，因此守护集合依旧会把pod部署在不可调度的节点上。通常这样是对的，因为守护集合一般运行的都是系统服务。
+
+我们先建立一个ssh-monitor.yml文件。
+
+```yaml
+apiVersion: apps/v1beta2
+kind: DaemonSet
+metadata:
+  name: ssd-monitor
+spec:
+  selector:
+    matchLabels:
+      app: ssd-monitor
+  template:
+    metadata:
+      labels:
+        app: ssd-monitor
+    spec:
+      nodeSelector:
+        dist: ssd
+      containers:
+      - name: main
+        image: luksa/ssd-monitor
+```
+
+之后用create命令创建守护集合。
+
+```sh
+$ kubectl create -f ssh-monitor.yml
+daemonset.apps/ssd-monitor created
+```
+
+查看守护集合的状态
+
+```sh
+$ kubectl get ds
+NAME          DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+ssd-monitor   0         0         0       0            0           dist=ssd        67s
+```
+
+很显然我们没有一个标有dist=ssd的节点。为我们的minikube加上标签后就可以看到守护集合将ssd-monitor部署在了我们的minikube节点上。
+
+```sh
+$ kubectl label nodes minikube dist=ssd 
+node/minikube labeled
+$ kubectl get ds
+NAME          DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+ssd-monitor   1         1         1       1            1           dist=ssd        3m37s
+```
+
+当然我们之后发现minikube并没有使用ssd，所以我们修改标签，再查看守护集合的状态。
+
+```sh
+$ kubectl label nodes minikube dist=hdd --overwrite
+node/minikube labeled
+$ kubectl get ds
+NAME          DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+ssd-monitor   0         0         0       0            0           dist=ssd        6m6s
+```
+
+## 一次性任务
+
+你可能会遇到这样一种场景，你希望能运行一个任务，并在任务结束后终止。至今提到的副本控制器、kubelet、副本集合、守护集合都自带自动重启的功用。
+
+k8s提供了Job类型的资源，它们与副本集合类似，会为你自动创建pod。但是如果一个pod以结果码0退出，那么这个pod不会被重启。而如果以任何异常码退出，Job会将pod重启（但是你也可以指定不重启）。
+
+接下来我们创建一个文件exporter.yml：
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-job
+spec:
+  template:
+    metadata:
+      labels:
+        app: batch-job
+    spec:
+      restartPolicy: OnFailure # default value is Always， another choice is Never
+      containers:
+      - name: main
+        image: luksa/batch-job
+```
+
+之后创建Job。
+
+```sh
+$ kubectl create -f exporter.yml
+job.batch/batch-job created
+```
+
+luksa/batch-job这个镜像会在等待120秒后退出，等待120秒后。
+
+```sh
+$ kubectl get jobs
+NAME        COMPLETIONS   DURATION   AGE
+batch-job   1/1           2m4s       6m9s
+$ kubectl get pods
+NAME              READY   STATUS      RESTARTS   AGE
+batch-job-884sp   0/1     Completed   0          4m43s
+```
+
+之所以在Job完成后没有删除pod是为了留给用户机会访问pod的日志。
+
+```sh
+$ kubectl logs batch-job-884sp
+Fri Feb 15 09:40:18 UTC 2019 Batch job starting
+Fri Feb 15 09:42:18 UTC 2019 Finished succesfully
+```
+
+一个Job中可以运行多个pod实例。
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-job-more
+spec:
+  completions: 5 # 运行共5次
+  parallelism: 3 # 最大并行3
+  template:
+    metadata:
+      labels:
+        app: batch-job-more
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: main
+        image: luksa/batch-job
+```
+
+创建Job后。
+
+```sh
+$ kubectl get job
+NAME             COMPLETIONS   DURATION   AGE
+batch-job        1/1           2m4s       16m
+batch-job-more   0/5           20s        20s
+$ kubectl get pods
+NAME                   READY   STATUS      RESTARTS   AGE
+batch-job-884sp        0/1     Completed   0          16m
+batch-job-more-llp4g   1/1     Running     0          24s
+batch-job-more-m9s2x   1/1     Running     0          24s
+batch-job-more-tnqhp   1/1     Running     0          24s
+```
+
+你能在任意时候修改并行数目。
+
+```sh
+$ kubectl scale job batch-job-more --replicas 1
+kubectl scale job is DEPRECATED and will be removed in a future version.
+job.batch/batch-job-more scaled
+```
+
