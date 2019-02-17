@@ -1262,3 +1262,55 @@ kubectl scale job is DEPRECATED and will be removed in a future version.
 job.batch/batch-job-more scaled
 ```
 
+最后我们还要考虑一个问题，如果程序存在bug，导致死锁，那么Job应该等待多久。你可以设置spec.activeDeadlineSeconds属性来定义等待时间。如果pod超时则会被标记为失败。你也可以配置Job最多可以重试几次，设置spec.backoffLimit字段，默认为6。
+
+## 定时任务
+
+定时任务是指在某个特定时间点启动或定期启动的任务。在Linux和Unix操作系统中，这类任务被称为cron任务。k8s对它们也提供了支持。
+
+首先你要创建一个CronJob类型的资源。在匹配时间点，k8s会按照CronJob定义中配置的Job模板创建一个Job对象，而Job对象会负责创建pods。
+
+假设你要运行之前例子中的批量任务每十五分钟一次。先创建一个文件cronjob.yml：
+
+```yaml
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: batch-job-every-fifteen-minutes
+spec:
+  schedule: "0,15,30,45 * * * *" #cron格式
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: periodic-batch-job
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: main
+            image: luksa/batch-job
+```
+
+创建CronJob后，查看作业列表。
+
+```sh
+$ kubectl get cj
+NAME                              SCHEDULE             SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+batch-job-every-fifteen-minutes   0,15,30,45 * * * *   False     0        <none>          15s
+```
+
+在指定时间，k8s会按照jobTemplate中指定的数据创建一个Job。由于k8s不会精确地时间点启动Job，它会在一个近似的时间点启动Job。如果你不希望Job的启动时间过迟，你可以为Job指定一个死线。
+
+```yaml
+apiVersiopn: batch/v1beta1
+kind: CronJob
+spec:
+  schedule: "0,15,30,45 * * * *"
+  startingDeadlineSeconds: 15 #必须在时间点15秒内启动Job
+```
+
+在上面的例子中，超过死线后，则不会启动Job，并且Job会被标记为失败。一个CronJob可能会重复创建任务或丢失任务，所以Job需要实现幂等来保证重复运行不会带来问题，并且之后执行Job应该完成之前未完成的工作。
+
+
+
