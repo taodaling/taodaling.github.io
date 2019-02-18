@@ -1894,4 +1894,102 @@ You've hit kubia-n7dqz
 ......
 ```
 
-可读探针会每10s执行一次容器中的ls /var/ready命令，ls在文件存在的情况下退出码为0，否则非0。
+可读探针会每10s执行一次容器中的ls /var/ready命令，ls在文件存在的情况下退出码为0，否则非0。编辑完服务后删除所有pods，让kubia副本控制器为你重启它们。
+
+```sh
+$ kubectl get pods
+NAME          READY   STATUS    RESTARTS   AGE
+kubia-bb9dq   0/1     Running   0          64s
+kubia-q725m   0/1     Running   0          64s
+kubia-qdkrr   0/1     Running   0          64s
+$ kubectl get rc
+NAME    DESIRED   CURRENT   READY   AGE
+kubia   3         3         0       6m2s
+```
+
+之后我们在一个容器中创建`/var/ready`文件并查看状态。
+
+```sh
+$ kubectl exec kubia-bb9dq -- touch /var/ready
+$ kubectl get pods
+NAME          READY   STATUS    RESTARTS   AGE
+kubia-bb9dq   1/1     Running   0          5m15s
+kubia-q725m   0/1     Running   0          5m15s
+kubia-qdkrr   0/1     Running   0          5m15s
+```
+
+上面这种方式是作为演示使用，真实场景下应该通过判断服务是否可用来返回成功失败。
+
+作为建议，你始终要提供可读探针，否则可能会出现连接拒绝的异常。并且在pod收到关闭信号时，k8s会自动将其从所有服务中移除，因此你不必在处理关闭的期间保证可读探测失败。
+
+### 去中心服务
+
+服务可以为我们提供一个静态的访问地址和端口。但是如果我们需要请求所有服务背后的pods呢，如果这些pods需要相互访问呢。一个选择是客户端通过k8s的API来拉取其它服务的地址和端口。但是由于你始终应该争取自己的应用对k8s无感知，因此这不是一种理想的解决方案。
+
+将一个服务的ClusterIP字段设置为None可以使服务去中心。
+
+我们创建一个kubia-svc-headless.yml文件。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia-headless
+spec:
+  clusterIP: None
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+  selector:
+    app: kubia
+```
+
+创建服务后，查看kubia-headless的详情。
+
+```sh
+$ kubectl describe svc kubia-headless
+Name:              kubia-headless
+Namespace:         default
+Labels:            <none>
+Annotations:       <none>
+Selector:          app=kubia
+Type:              ClusterIP
+IP:                None
+Port:              http  80/TCP
+TargetPort:        http/TCP
+Endpoints:         172.17.0.10:8080,172.17.0.8:8080,172.17.0.9:8080
+Session Affinity:  None
+Events:            <none>
+```
+
+接下来我们可以启动DNS查询来查询Pods的IP地址。但是很不幸，你的kubia容器镜像并不包含nslookup（或dig）二进制文件，因此你无法使用DNS查询。要实现DNS相关动作，你可以使用tutum/dnsutils镜像，其位于Docker Hub上，同时包含nslookup和dig二进制文件。如果想要用于开发，你需要重建自己的镜像。但是由于是为了试验，因此我们简单点。
+
+```sh
+$ kubectl run dnsutils --image=tutum/dnsutils --generator=run-pod/v1 --command -- sleep infinity
+```
+
+这里使用--generator=run-pod/v1选项，表示直接创建pod，不需要任何副本控制器。
+
+等待容器创建好后，执行命令。
+
+```sh
+$ kubectl exec dnsutils -- nslookup kubia-headless
+Server:         10.96.0.10
+Address:        10.96.0.10#53
+
+Name:   kubia-headless.default.svc.cluster.local
+Address: 172.17.0.10
+Name:   kubia-headless.default.svc.cluster.local
+Address: 172.17.0.9
+Name:   kubia-headless.default.svc.cluster.local
+Address: 172.17.0.8
+$ kubectl get pods -o wide
+NAME          READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+dnsutils      1/1     Running   0          3m36s   172.17.0.6    minikube   <none>           <none>
+kubia-bwfpc   1/1     Running   0          23m     172.17.0.10   minikube   <none>           <none>
+kubia-mvxx7   1/1     Running   0          23m     172.17.0.9    minikube   <none>           <none>
+kubia-vs84r   1/1     Running   0          23m     172.17.0.8    minikube   <none>           <none>
+```
+
+可以看到列出了所有支持kubia-headless的pods信息。
