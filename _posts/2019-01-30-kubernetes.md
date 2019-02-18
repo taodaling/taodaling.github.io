@@ -1627,6 +1627,22 @@ spec:
 
 创建服务后，你就可以通过任意节点的IP地址加上30123端口访问服务了。
 
+对于minikube要查看服务地址。
+
+```sh
+$ minikube service list
+|-------------|----------------------|-----------------------------|
+|  NAMESPACE  |         NAME         |             URL             |
+|-------------|----------------------|-----------------------------|
+| default     | external-service     | No node port                |
+| default     | kubernetes           | No node port                |
+| default     | kubia                | No node port                |
+| default     | kubia-nodeport       | http://192.168.99.107:30123 |
+| kube-system | kube-dns             | No node port                |
+| kube-system | kubernetes-dashboard | No node port                |
+|-------------|----------------------|-----------------------------|
+```
+
 ### LoadBalancer
 
 我们先创建一个kubia-svc-loadbalancer.yml文件。
@@ -1646,3 +1662,236 @@ spec:
 ```
 
 然后创建服务。如果不支持LoadBalancer，那效果会和NodePort相同，因为LoadBalancer是NodePort的一个扩展。
+
+### Ingress
+
+每个LoadBalancer都需要自己的负载均衡设备以及一个IP地址。而Ingress只需要一个，即使是为一打服务提供访问。当客户端向Ingress发送一个HTTP请求，HTTP请求中的主机和路径用于决定请求应该转发给哪个服务。Ingress在HTTP层执行操作，并且可以提供像基于Cookie的Session关联这类特性。
+
+![](https://raw.githubusercontent.com/taodaling/assets/master/images/2019-01-30-kubernetes/ingress.PNG)
+
+要让ingress资源工作，需要创建一个Ingress控制器，不同的k8s环境使用不同的控制器实现。
+
+由于我们在minikube上实验，minikube创建启用控制器需要执行下面步骤。
+
+```sh
+$ minikube addons list
+- addon-manager: enabled
+- dashboard: enabled
+- default-storageclass: enabled
+- efk: disabled
+- freshpod: disabled
+- gvisor: disabled
+- heapster: disabled
+- ingress: disabled
+- kube-dns: disabled
+- metrics-server: disabled
+- nvidia-driver-installer: disabled
+- nvidia-gpu-device-plugin: disabled
+- registry: disabled
+- registry-creds: disabled
+- storage-provisioner: enabled
+- storage-provisioner-gluster: disabled
+```
+
+可以看到ingress是disabled的。接下来启动ingress。
+
+```sh
+$ minikube addons enable ingress
+ingress was successfully enabled
+```
+
+之后我们查看kube-system命名空间下的pods。
+
+```sh
+$ kubectl get pods --namespace=kube-system
+NAME                                       READY   STATUS              RESTARTS   AGE
+coredns-86c58d9df4-8kv5b                   1/1     Running             8          7d6h
+coredns-86c58d9df4-wn7vl                   1/1     Running             8          7d6h
+default-http-backend-5ff9d456ff-smzwv      1/1     Running             0          4m42s
+etcd-minikube                              1/1     Running             0          6h38m
+kube-addon-manager-minikube                1/1     Running             8          7d6h
+kube-apiserver-minikube                    1/1     Running             0          6h38m
+kube-controller-manager-minikube           1/1     Running             0          6h40m
+kube-proxy-2zvkk                           1/1     Running             0          6h39m
+kube-scheduler-minikube                    1/1     Running             7          7d6h
+kubernetes-dashboard-ccc79bfc9-bc7qm       1/1     Running             17         7d5h
+nginx-ingress-controller-7c66d668b-tcwfs   0/1     ContainerCreating   0          4m41s
+storage-provisioner                        1/1     Running             17         7d6h
+```
+
+可以看到出现了一个名为nginx-ingress-controller-7c66d668b-tcwfs的pod。
+
+接下来创建一个Ingress资源。新建文件kubia-ingress.yaml。
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: kubia
+spec:
+  rules:
+  - host: kubia.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: kubia-nodeport
+          servicePort: 80
+```
+
+创建ingress之后查看列表。
+
+```sh
+$ kubectl get ingresses
+NAME    HOSTS               ADDRESS     PORTS   AGE
+kubia   kubia.example.com   10.0.2.15   80      4m42s
+```
+
+之后配置host文件，追加一行。
+
+```sh
+192.168.99.107 kubia.example.com
+```
+
+之后访问地址http://kubia.example.com即可。
+
+```sh
+$ curl http://kubia.example.com
+You've hit kubia-9vqtgs
+```
+
+我们可以为同一个host配置多个路径。
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: kubia
+spec:
+  rules:
+  - host: kubia.example.com
+    http:
+      paths:
+      - path: /foo
+        backend:
+          serviceName: foo
+          servicePort: 80
+      - path: /bar
+        backend:
+          serviceName: bar
+          servicePort: 80
+```
+
+同样我们也可以配置多个host。
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: kubia
+spec:
+  rules:
+  - host: foo.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: foo
+          servicePort: 80
+  - host: bar.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: bar
+          servicePort: 80
+```
+
+如果客户端发起https连接，那么现在ingress还无法处理。我们可以为ingress增加https的支持，这样的好处不仅仅提高了安全性，而且只要通过ingress进行访问，我们所有的集群中的pod都不需要实现https，只需要支持http即可。
+
+先生成密钥和证书。
+
+```sh
+$ openssl genrsa -out tls.key 2048
+Generating RSA private key, 2048 bit long modulus
+...............................................................................................+++
+...+++
+$ openssl req -new -x509 -key tls.key -out tls.cert -days 360 -subj /CN=kubia.example.com
+```
+
+之后基于证书和密钥为ingress创建证书和密钥。
+
+```sh
+$ kubectl create secret tls tls-secret --cert=tls.cert --key=tls.key
+secret/tls-secret created
+```
+
+现在私钥和证书保存在名为tls-secret的文件中。现在我们就可以支持https协议了。创建一个新文件kubia-ingress-tls.yml。
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: kubia
+spec:
+  tls:
+  - hosts:
+    - kubia.example.com # kubia.example.com域名支持tls连接
+    secretName: tls-secret
+  rules:
+  - host: kubia.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: kubia-nodeport
+          servicePort: 80
+```
+
+你可以选择使用apply命令更新已有资源。
+
+```sh
+$ kubectl apply -f kubia-ingree-tls.yml
+```
+
+之后访问https地址。
+
+```sh
+$ curl -k -s https://kubia.example.com
+You've hit kubia-n7dqz
+```
+
+### Pod预热
+
+当一个服务创建时，由于被标签选择器选中会加入到端点中，而之后服务会直接将请求转发给刚启动的Pod。但是一个刚启动的Pod往往需要预热，比如加载必要的框架，初始化缓存，加载配置文件等等。
+
+之前我们已经学习过了存活探针，类似于存活探针，k8s为我们提供了可读探针。可读探针会周期性运行，来判断pod是否可以接受请求。如果容器的可读探针返回成功，则表示容器已经准备好接受请求了。
+
+存在三类可读探针：
+
+- Exec探针，在pod中执行一个进程，并按照进程退出码来判断是否可读。
+- HTTP GET探针，发送一个HTTP GET请求，并根据HTTP响应的状态码来判断是否可读。
+- TCP Socket探针，与容器的指定端口建立TCP连接，如果建立成功则表示可读。
+
+如果一次可读探测失败，那么会将该pod移除出端点，直到之后某次可读探测成功，才将pod加回到端点。
+
+之后我们编辑名为kubia的副本控制器，并追加可读探针。
+
+```yaml
+......
+  spec:
+      containers:
+      - image: taodaling/kubia
+        readinessProbe:
+          exec:
+            command:
+            - ls
+            - /var/ready
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+......
+```
+
+可读探针会每10s执行一次容器中的ls /var/ready命令，ls在文件存在的情况下退出码为0，否则非0。
