@@ -4,6 +4,10 @@ layout: post
 ---
 - Table
 {:toc}
+# 注意
+
+本文基本是对于《Kubernetes in Action》的翻译和个人整理。
+
 # 概论
 
 ## 微服务带来的挑战
@@ -1312,5 +1316,333 @@ spec:
 
 在上面的例子中，超过死线后，则不会启动Job，并且Job会被标记为失败。一个CronJob可能会重复创建任务或丢失任务，所以Job需要实现幂等来保证重复运行不会带来问题，并且之后执行Job应该完成之前未完成的工作。
 
+## 内部服务
 
+你已经了解过了如何部署pods。虽然每个pod可以忽略外部刺激独立工作，但是现今的应用往往需要对外部请求做出响应。比如微服务场景，pod需要处理来自集群内的其它pods的请求，以及来自集群外部的pods的请求。
 
+Pod需要一种发现其它pods的手段。在k8s世界外部，系统管理员需要在应用的配置文件中配置依赖组件的IP地址。但是在k8s中却不能这么做，原因有三：
+
+- Pods是临时的，随时都可能因为各种原因上线下线
+- K8s在pod调度到节点后，pod启动前为pod分配一个ip地址。
+- 水平扩展可能会提供更多的相同服务。
+
+为了解决这些问题，k8s提供了另一种类型的资源—服务。服务是用来为一组提供相同服务的pods暴露单一不变入口的资源。在服务存在期间中，每个服务都会有一个不变IP地址和端口。而服务接受的连接会路由到服务后面的一个pod去。这样不同组件之间就通过服务解耦了开来。
+
+一个服务可以被多个pod支持，而与服务建立的连接会在这些pods之间进行负载均衡。我们先创建一个ReplicationController。
+
+```yaml
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: kubia
+spec:
+  replicas: 3
+  selector:
+    app: kubia
+  template:
+   metadata:
+     labels:
+       app: kubia
+   spec:
+     containers:
+     - name: kubia
+       image: taodaling/kubia
+       ports:
+       - containerPort: 8080
+```
+
+之后创建kubia副本控制器。再创建一个文件kubia-svc.yml。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia
+spec:
+  ports:
+  - port: 80 # 服务暴露端口
+    targetPort: 8080 # 容器转发端口
+  selector:
+    app: kubia
+```
+
+创建服务后，查看已有服务。
+
+```sh
+$ kubectl get svc
+NAME         TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1     <none>        443/TCP   34m
+kubia        ClusterIP   10.102.82.0   <none>        80/TCP    26m
+```
+
+可以看到kubia被分配了集群IP，这个IP只能在集群内部使用。要在集群中的pod中执行命令，你需要使用exec命令。exec命令用于在容器中执行一个命令。
+
+```sh
+$ kubectl exec kubia-7p95h -c kubia -- curl -s 10.102.82.0:80
+You've hit kubia-rk257
+```
+
+如果你多次执行这个命令，你会发现处理请求的服务器会发生变更。这是因为服务会随机选取一个背后的pod进行请求转发，即使请求来自同一个客户端。如果你希望同一个客户端的请求都由一个pod进行处理，你可以设置服务的sessionAffinity为ClientIP，默认值是None。
+
+```yaml
+apiVersion: v1
+kind: Service
+spec:
+  sessionAffinity: ClientIP
+......
+```
+
+如果你的Pod暴露了多个端口，你也可以通过服务进行暴露。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: https
+    port: 443
+    targetPort: 8443
+  selector:
+    app: kubia
+```
+
+上面的例子中我们为端口分配了名字。如果你使用了不常见的端口，那么你可以为端口分配别名，在使用时可以通过端口名称引用。比如：
+
+```yaml
+kind: Pod
+sepc:
+  containers:
+  - name: kubia
+    ports:
+    - name: http
+      containerPort: 8080
+    - name: https
+      containerPort: 8443
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+  - name: https
+    port: 443
+    targetPort: https
+```
+
+这样做最大的好处是允许你任意变动pod的端口，而不需要修改服务的定义，即pod和服务端口解耦。
+
+那么pod是如何发现服务的呢。当一个pod启动，k8s会为它设置一系列环境变量，其中就包含了当时存在的服务的信息。由于我们是先创建了pod后再创建了服务，因此pod中不包含kubia服务的信息。我们先删除所有的pod，并让副本控制器为我们重新创建。之后我们选择一个重启后的pod并使用exec命令查看环境变量。
+
+```sh
+$ kubectl exec kubia-9vqtg -- env
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOSTNAME=kubia-9vqtg
+KUBIA_SERVICE_PORT=80
+KUBIA_PORT=tcp://10.102.82.0:80
+KUBIA_PORT_80_TCP_PROTO=tcp
+KUBERNETES_SERVICE_HOST=10.96.0.1
+KUBERNETES_SERVICE_PORT_HTTPS=443
+KUBERNETES_PORT_443_TCP_PROTO=tcp
+KUBIA_SERVICE_HOST=10.102.82.0
+KUBIA_PORT_80_TCP=tcp://10.102.82.0:80
+KUBERNETES_SERVICE_PORT=443
+KUBERNETES_PORT_443_TCP_PORT=443
+KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+KUBIA_PORT_80_TCP_ADDR=10.102.82.0
+KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+KUBIA_PORT_80_TCP_PORT=80
+KUBERNETES_PORT=tcp://10.96.0.1:443
+NPM_CONFIG_LOGLEVEL=info
+NODE_VERSION=7.10.1
+YARN_VERSION=0.24.4
+HOME=/root
+```
+
+可以看到里面包含了kubia相关的地址和端口。环境变量通常被用于查找服务的地址和端口，这也正是DNS的工作。再kube-system命名空间下存在一个名为kube-dns的pod。所有集群中的pod的信息都会自动配置在其中。所有pod中运行的进程发起的DNS请求都会被k8s自带的DNS服务器所处理。
+
+每个服务都对应内部DNS服务器的一个入口，而所有知道服务名字的客户端也可以使用全限定域名（FQDN）来访问它，而不需要解析环境变量。比如前后端问题中，前端访问后端数据库可以通过地址`backend-database.default.svc.cluster.local`。其中backend-database是服务名称，default是命名空间，svc表示服务，cluster表示集群，local表示本地。但是端口还是需要预先知道或解析环境变量。
+
+由于默认的后缀就是svc.cluster.local，因此可以省略为`backend-database.default`，而如果服务与客户端处于同一命名空间，则可以省略命名空间，即`backend-database`。
+
+为了实验，我们先使用exec命令登陆到pods上。
+
+```sh
+$ kubectl exec -i -t kubia-dh2fk -- /bin/bash
+root@kubia-dh2fk:/#
+```
+
+接着尝试所有的FQDN。
+
+```sh
+root@kubia-dh2fk:/# curl http://kubia.default.svc.cluster.local
+You've hit kubia-9vqtg
+root@kubia-dh2fk:/# curl http://kubia.default.svc
+You've hit kubia-9vqtg
+root@kubia-dh2fk:/# curl http://kubia.default
+You've hit kubia-n7dqz
+root@kubia-dh2fk:/# curl http://kubia
+You've hit kubia-9vqtg
+```
+
+查看/cat/resolv.conf文件，这个文件中配置了你的自定义DNS服务器以及默认域名。
+
+```sh
+root@kubia-dh2fk:/# cat /etc/resolv.conf
+nameserver 10.96.0.10
+search default.svc.cluster.local svc.cluster.local cluster.local
+options ndots:5
+```
+
+但是如果你希望ping服务时，你会发现无法ping通。
+
+```sh
+root@kubia-dh2fk:/# ping kubia
+PING kubia.default.svc.cluster.local (10.102.82.0): 56 data bytes
+^C--- kubia.default.svc.cluster.local ping statistics ---
+170 packets transmitted, 0 packets received, 100% packet loss
+```
+
+这是因为服务的集群IP是虚拟IP，只有结合服务端口时才有意义。
+
+如果你希望服务能为你将请求转发到外部IP和端口，而非集群内IP和端口，这样就可以对客户端屏蔽依赖是否处于集群中这个信息。要解决这个问题，我们需要揭露一些关于服务的实现方式。服务并不是与pod直接关联，二者之间存在端点（Endpoints）类的资源。
+
+```sh
+$ kubectl describe svc kubia
+......
+Endpoints:         172.17.0.10:8080,172.17.0.8:8080,172.17.0.9:8080
+......
+```
+
+一个端点资源是一组IP地址和端口，它们对外暴露服务。就像其它k8s中的资源一样你可以查看它们。
+
+```sh
+$ kubectl get endpoints kubia
+NAME    ENDPOINTS                                          AGE
+kubia   172.17.0.10:8080,172.17.0.8:8080,172.17.0.9:8080   3h13m
+```
+
+服务的标签选择器用于为端点构建一系列IP和端口地址，当客户端连接到服务，服务会选择一个IP和端口进行转发。如果你创建服务时没有指定选择器，那么k8s甚至不会为你创建一个端点资源。你可以自行创建端点资源并设置一组IP和端口。
+
+我们先创建一个名为external-service.yml的文件。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-service
+spec:
+  ports:
+  - port: 80
+```
+
+接下来我们创建端点资源，external-service-endpoints.yml。
+
+```yaml
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: external-service
+subsets:
+  - addresses:
+    - ip: 11.11.11.11
+    - ip: 22.22.22.22
+    ports:
+    - port: 80
+```
+
+注意这里端点和服务应该同名。之后创建资源，再查看服务详细信息。
+
+```sh
+$ kubectl create -f external-service-endpoints.yml
+endpoints/external-service created
+
+$ kubectl describe svc external-service
+Name:              external-service
+Namespace:         default
+Labels:            <none>
+Annotations:       <none>
+Selector:          <none>
+Type:              ClusterIP
+IP:                10.97.118.223
+Port:              <unset>  80/TCP
+TargetPort:        80/TCP
+Endpoints:         11.11.11.11:80,22.22.22.22:80
+Session Affinity:  None
+Events:            <none>
+```
+
+如果你之后把外部应用迁移到k8s中，你可以向服务添加一个选择器，这样端点就会被自动更新。当然如果你将内部应用移动到外部，你可以移除选择器，这样端点就不会被自动更新。
+
+除了通过手动配置端点来暴露外部服务，你也可以使用FQDN的方式来引用外部服务。要为外部应用创建一个服务为其提供别名，我们可以创建一个资源类型为ExternalName的资源。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-service
+spec:
+  type: ExternalName
+  externalName: someapi.somecompany.com
+  ports:
+  - port: 80
+```
+
+创建了资源后，你就可以通过external-service.default来在内部引用它了。ExternalService在DNS层次单独实现，在DNS服务器中会为别名服务专门创建一条CNAME类型的DNS记录。因此客户端会跳过别名服务，直接通过DNS服务器拿到外部应用地址并连接。因此，别名服务甚至不会被分配集群IP。
+
+## 外部服务
+
+至今为止我们讨论的都是仅供内部访问的service。要让一个服务可以被外部访问，有三种方法：
+
+- 设置service类型为NodePort。对于NodePort类型的服务，集群中每个节点都会打开一个端口，并将这个端口收到的报文转发给潜在的服务。因此你可以通过集群的任意一个节点对服务进行访问。
+- 设置服务类型为LoadBalancer。这是对NodePort类型的一个扩展，这允许服务能够通过一个负载均衡设备进行访问，这个负载均衡组件由k8s运行的云架构所提供。这个负载均衡设备将接收到的请求重定向到节点端口，客户端通过负载均衡设别的IP连接服务。
+- 创建一个Ingress资源。
+
+### NodePort
+
+先创建一个NodePort服务，新建一个文件kubia-svc-nodeport.yml。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia-nodeport
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 8080
+    nodePort: 30123
+  selector:
+    app: kubia
+```
+
+创建服务后，你就可以通过任意节点的IP地址加上30123端口访问服务了。
+
+### LoadBalancer
+
+我们先创建一个kubia-svc-loadbalancer.yml文件。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia-loadbalancer
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: kubia
+```
+
+然后创建服务。如果不支持LoadBalancer，那效果会和NodePort相同，因为LoadBalancer是NodePort的一个扩展。
