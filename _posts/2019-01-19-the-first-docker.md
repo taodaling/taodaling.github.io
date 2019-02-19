@@ -1388,6 +1388,8 @@ CMD ["/bin/bash", "-l"] # exec格式，推荐
 CMD /bin/bash -l # /bin/bash -c执行
 ```
 
+使用/bin/bash执行会多出一个冗余的shell进程，而使用exec会由系统直接执行。
+
 当你没有在docker run命令中显示指定容器启动后执行的命令的话，CMD指令才会被执行。
 
 一个Dockerfile中假如有多条CMD指令，那么仅最后一条会被保留。如果你确实需要执行多条命令，可以用RUN命令将这些命令写入到脚本中。之后CMD命令直接执行脚本就可以了。

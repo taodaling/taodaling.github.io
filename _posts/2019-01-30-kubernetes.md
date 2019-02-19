@@ -1993,3 +1993,402 @@ kubia-vs84r   1/1     Running   0          23m     172.17.0.8    minikube   <non
 ```
 
 可以看到列出了所有支持kubia-headless的pods信息。
+
+## 卷
+
+由于容器的文件系统是镜像提供的，因此你在容器中对文件系统的写入不会被持久化。容器一旦重启，所有的写入都会丢失。
+
+k8s提供了卷（volume）的定义，它们是pod的一部分，并与pod共享生命周期，即当pod启动时创建，关闭时销毁。一个pod中所有的容器都可以看到卷中的内容，但在这之前需要挂载到容器的文件系统中
+
+除了需要在pod中定义volume，你还需要为容器定义VolumeMount。
+
+如果你仅需要一个空白卷，那么可以使用emptyDir类型的卷。当然k8s还支持其它带内容的卷，内容的装填发生正在容器启动前。卷的类型有如下：
+
+- emptyDir，一个用于存储临时数据的空白卷。
+- hostPath，用于挂载来自工作节点的文件系统
+- gitRepo，一开始装填git仓库检出内容
+- nfs，一个NFS共享
+- persistentVolumeClaim，使用一个预先或动态提供的持久化存储。
+- configMap，secret，downwardAPI，用于向pod暴露k8s资源和集群信息。
+
+### emptyDir
+
+新建一个文件fortune-pod.yml。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fortune
+spec:
+  containers:
+  - image: luksa/fortune
+    name: html-generator
+    volumeMounts:
+    - name: html
+      mountPath: /var/htdocs
+  - image: nginx:alpine
+    name: web-server
+    volumeMounts:
+    - name: html
+      mountPath: /usr/share/nginx/html
+      readOnly: true
+    ports:
+    - containerPort: 80
+      protocol: TCP
+  volumes:
+    - name: html
+      emptyDir: {}
+```
+
+luksa/fortune这个镜像会每10s更新/var/htdocs/index.html文件，这些变动会体现在web-server容器中。
+
+emptyDir是在工作节点的实际硬盘上创建的，因此性能受限于硬盘的读写速度。但是你可以要求k8s在tmpfs文件系统（在内存中而非硬盘上）创建emptyDir。
+
+```yaml
+volumes:
+- name: html
+  emptyDir:
+    medium: Memory
+```
+
+### gitRepo
+
+一个gitRepo卷是在emptyDir上克隆git仓库得到的。创建文件gitrepo-volume-pod.yml。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+ name: gitrepo-volume-pod
+spec:
+ containers:
+ - image: nginx:alpine
+   name: web-server
+   volumeMounts:
+   - name: html
+     mountPath: /usr/share/nginx/html
+     readOnly: true
+   ports:
+   - containerPort: 80
+     protocol: TCP
+ volumes:
+ - name: html
+   gitRepo:
+     repository: https://github.com/luksa/kubia-website-example.git
+     revision: master
+     directory: .
+```
+
+默认情况下仓库会克隆在/kubia-website-example下，加了directory后会克隆在/下。
+
+如果你希望能在推送git仓库时自动更新本地仓库，可以使用一些具有与git同步功能的镜像。并在镜像上挂载卷。
+
+### hostPath
+
+一个hostPath卷指向一个节点文件系统中的文件或目录。使用hostPath会使得pod的行为与其被调度到的节点关联。
+
+所以记住只在你需要读写系统文件时使用hostPath，而不要为了跨pods持久化数据使用它。
+
+### NAS
+
+当应用需要持久化数据，并且希望在重新调度pod后依旧能访问数据，此时之前提到的卷类型都不适用。数据必须存储在网络存储（Network-attached storage，NAS）中。
+
+### PersistentVolumes和PersistentVolumeClaims
+
+为了让应用使用存储时与基础架构解耦，k8s引入了两种新的资源。分别是PersistentVolumes和PersistentVolumeClaims。
+
+![](https://raw.githubusercontent.com/taodaling/assets/master/images/2019-01-30-kubernetes/persistent-volume-claim.PNG)
+
+集群管理员建立了底层存储，并通过k8s提供的API将存储注册为Persistent Volume资源，当创建资源时，管理员需要指定它的大小和支持的访问模式。
+
+当集群使用者需要使用持久化存储时，它们首先创建一个Persistent Volume Claim的清单，指定最小大小和需要的访问模式。之后用户向k8s的API提交清单，而k8s负责寻找一块合适的Persistent Volume并将它绑定到Persistent Volume Claim上。
+
+之后Persistent Volume Claim就可以作为卷出现在pod中了。其它用户不能使用相同的PersistentVolume直到它被释放，即与它绑定的Persistent Volume Claim被删除。
+
+接下来我们创建一个持久化卷，先创建一个文件mongodb-pv-host-path.yml。
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mongodb-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: #它可以被一个节点以读写模式挂载，或被多个节点以只读挂载
+  - ReadWriteOnce 
+  - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Retain # 在持久卷释放后，应该保留数据（不擦除数据或删除持久卷）
+  hostPath:
+    path: /tmp/mongodb
+```
+
+我们建立了一个持久卷，其底层存储由目录/tmp/mongodb提供。查看现有的持久卷。
+
+```sh
+$ kubectl get pv
+NAME         CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM   STORAGECLASS   REASON   AGE
+mongodb-pv   1Gi        RWO,ROX        Retain           Available                                   33s
+```
+
+像节点一样，持久卷是全局资源，不属于任何命名空间。
+
+之后我们要构建我们的持久卷声明，持久卷声明的创建与pod的创建是分开的过程，因为你希望pod重新调度后持久卷声明依旧可用。
+
+创建一个mongodb-pvc.yml文件。
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-pvc
+spec:
+  resources:
+    requests: #需要1GiB的存储
+      storage: 1Gi
+  accessModes:
+  - ReadWriteOnce #需要持久化卷支持单客户端读写
+  storageClassName: "" #之后会学
+```
+
+在持久化声明定义文件中，我们对持久化卷提出了需求，要求至少要提供1G的存储，并且支持ReadWriteOnce访问模式。由于我们之前创建的mongodb-pv完全满足这些要求，因此会被选中与声明绑定。
+
+创建资源后查看现有的持久化卷声明。
+
+```sh
+$ kubectl get pvc
+NAME          STATUS   VOLUME       CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+mongodb-pvc   Bound    mongodb-pv   1Gi        RWO,ROX                       9s
+$ kubectl get pv
+NAME         CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                 STORAGECLASS   REASON   AGE
+mongodb-pv   1Gi        RWO,ROX        Retain           Bound    default/mongodb-pvc                           21m
+```
+
+支持的访问模式有：
+
+- RWO，Read Write Once，只有一个节点可以挂载它用于读写
+- ROX，Read Only Many，多个节点可以挂载它用于读
+- RWX，Read Write Many，多个节点可以挂载它用于读写
+
+RWO、ROX、RWX关联的时可以同时挂载它的工作节点数目，而非pods。
+
+持久化卷声明资源时存在于命名空间下的，并且只能被相同命名空间下的pods使用。
+
+接着我们创建一个pod，提供mongo作为NoSQL数据库。编辑文件mongodb-pod.yml。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mongodb
+spec:
+  containers:
+  - image: mongo
+    name: mongodb
+    volumeMounts:
+    - name: mongodb-data
+      mountPath: /data/db
+    ports:
+    - containerPort: 27017
+      protocol: TCP
+    volumes:
+    - name: mongodb-data
+      persistentVolumeClaim:
+        claimName: mongodb-pvc
+```
+
+之后登陆mongo并手动写入数据。
+
+```sh
+$ kubectl exec -it mongodb -- mongo
+> use mystore
+switched to db mystore
+> db.foo.insert({name: 'foo'})
+WriteResult({ "nInserted" : 1 })
+> db.foo.find()
+{ "_id" : ObjectId("5c6b96833cb8067fbcc2fb5e"), "name" : "foo"
+> exit
+bye
+```
+
+重启mongodb豆荚，再尝试上面命令，看数据是否被持久化了。
+
+```sh
+$ kubectl delete pods mongodb
+pod "mongodb" deleted
+$ kubectl create -f mongodb-pod.yml
+pod/mongodb created
+$ kubectl exec -it mongodb -- mongo
+> use mystore
+switched to db mystore
+> db.foo.find()
+{ "_id" : ObjectId("5c6b96833cb8067fbcc2fb5e"), "name" : "foo" }
+> exit
+bye
+```
+
+使用持久化卷的最大好处是开发人员不需要管理底层存储，只需要再持久化卷声明中提出存储需求就可以了。
+
+最后我们删除持久化卷声明。
+
+```sh
+$ kubectl delete pod mongodb
+pod "mongodb" deleted
+$ kubectl delete pvc mongodb-pvc
+persistentvolumeclaim "mongodb-pvc" deleted
+```
+
+接下来重建持久化卷声明。
+
+```sh
+$ kubectl create -f mongodb-pvc.yml
+persistentvolumeclaim/mongodb-pvc created
+$ kubectl get pvc
+NAME          STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+mongodb-pvc   Pending                                                     5s
+```
+
+可以看到持久化卷声明的状态保持为挂起，与第一次创建的状态不同。我们查看一下持久化卷的状态。
+
+```sh
+$ kubectl get pv
+NAME         CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS     CLAIM                 STORAGECLASS   REASON   AGE
+mongodb-pv   1Gi        RWO,ROX        Retain           Released   default/mongodb-pvc                           54m
+```
+
+可以看到持久化卷的状态时Released而非Available。因为你之前使用过了这个卷，它可能包含了数据并且不应该直接绑定到全新的声明上去，这样可以为管理员提供一个清理它的机会。否则一个新的pod可能会读取到之前pod遗留下来的数据，即使声明和pod处于不同的命名空间下。
+
+这些行为源于你将它的persistentVolumeReclaimPolicy设置为Retain，你希望k8s在卷释放后为你保存volume和它的内容。据我所知，要复用卷的唯一方法就是删除后重建。而潜在的文件存储，你可以自行决定是否要保留。
+
+还存在另外两种持久化卷回收策略，Recycle和Delete。前者删除卷内容并使卷可用，后者删除该卷，你可以随时变更策略。
+
+可以看到持久化卷帮助我们开发人员从底层存储解脱了出来，但是运维人员还是需要手动添加持久化卷以供应不同的pod使用。幸运的是，k8s可以通过动态提供持久化卷自动地完成这项任务。
+
+集群管理员可以部署一个持久化卷供应器并定义多个StorageClass对象，允许用户选择他们希望的持久化卷类型，来取代手动创建持久化卷。用户可以在持久化卷声明的定义文件中引用StorageClass。
+
+类似于持久化卷，StorageClass资源属于全局。K8s为大多数流行的云服务提供者提供了供应器。使用供应器的好处是你会有用不完的持久化卷（当然你可能用完了存储空间）。
+
+我们首先需要定义StorageClass资源。新建文件storageclass-fast.yml。
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast
+provisioner: k8s.io/minikube-hostpath #供应器插件
+parameters: #传递给供应器的参数
+  type: pd-ssd
+```
+
+创建了StorageClass后，我们可以在持久化卷声明定义中引用StorageClass。之后新建文件mongodb-pvc-dp.yml。
+
+```yaml
+
+```
+
+创建资源后查看状态。
+
+```sh
+$ kubectl get pvc
+NAME          STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+mongodb-pvc   Bound    pvc-382a9399-3419-11e9-b21a-0800279f3491   100Mi      RWO            fast           5s
+```
+
+可以看到一个名为pvc-382a9399-3419-11e9-b21a-0800279f3491的持久化卷被自动创建了。
+
+查看一下已有的StorageClass。
+
+```sh
+$ kubectl get sc
+NAME                 PROVISIONER                AGE
+fast                 k8s.io/minikube-hostpath   38m
+standard (default)   k8s.io/minikube-hostpath   8d
+```
+
+名为standard的StorageClass被标记为default。如果你在创建持久化卷声明时既没有指定storageClassName，那么会使用standard为你提供动态持久化卷。
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-pvc-standard
+spec:
+  resources:
+    requests:
+      storage: 100Mi
+  accessModes:
+  - ReadWriteOnce
+```
+
+创建持久化卷声明后查看StorageClass。
+
+```sh
+$ kubectl get pvc
+NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+mongodb-pvc            Bound    pvc-382a9399-3419-11e9-b21a-0800279f3491   100Mi      RWO            fast           17m
+mongodb-pvc-standard   Bound    pvc-92f34bc1-341b-11e9-b21a-0800279f3491   100Mi      RWO            standard       11s
+```
+
+这也是我们之前希望持久化卷声明绑定预先创建的持久化卷时将storageClassName设置为""的原因，只要这样才会使用预先创建的持久化卷。
+
+## ConfigMap和Secrets
+
+一般应用在开始时，会直接通过命令行传递配置信息。但是随着配置项越来越多，通过命令行传递所有的参数变得不现实了，因此开始采用配置文件的方式。还有另外一种替代命令行参数的方式，通过环境变量传递配置信息。比如官方的MYSQL镜像，就是通过读取环境变量中的MYSQL_ROOT_PASSWORD来设置密码。
+
+为什么在容器世界中，环境变量会这么流行？因为使用配置文件，你需要将配置文件硬备份到容器镜像中或者挂载包含配置文件的卷到容器文件系统。硬备份类似于硬编码，因为你每次修改配置文件后都需要重新构建镜像，并且所有有权接触到这个镜像的人都能得到你的配置信息，包括那些隐私信息，比如证书以及密钥等。使用卷会稍微好一些，但是依旧要求你在启动容器之间预先把配置文件保存到目录下。
+
+当然你也可以使用之前提到的gitRepo挂载的方式，这样可以控制版本，并且保证全局一致。但是k8s也提供了自己的存储配置数据的方式，在k8s中，存储配置数据的资源称为ConfigMap（配置表）。
+
+你可以通过下面几种方式配置你的应用。
+
+- 向容器传递命令行参数
+- 为每个容器设置自定义环境变量
+- 通过特殊的卷挂载配置文件到容器中
+
+### 命令行传递
+
+你可以覆盖镜像中自带的CMD。
+
+```yaml
+kind: Pod
+Spec:
+  containers:
+  - image: some/image
+    command: ["/bin/command"]
+    args: ["arg1", "arg2", "arg3"]
+```
+
+command和args在容器运行期间不能改变。
+
+### 环境变量传递
+
+```yaml
+kind: Pod
+Spec:
+  containers:
+  - image: luksa/fortune:env
+    env:
+    - name: INTERVAL
+      value: "30"
+```
+
+在定义环境变量时后定义的环境变量可以引用先定义的环境变量。
+
+```yaml
+env:
+- name: FIRST_VAR
+  value: "foo"
+- name: SECOND_VAR
+  value: "${FIRST_VAR}bar"
+```
+
+使用环境变量传递配置信息的缺点时你需要为不同的环境准备不同的pod定义文件。
+
+### ConfigMap
+
+应用配置的关注点是按照不同的环境选择不同的配置，并与代码分离。在微服务的场景下，你将自己的服务组合到系统之中，此时你可以认为pod的定义是你的应用的代码的一部分，因此pod定义文件中不应该包含配置数据。
+
+k8s允许将配置分割到不同的对象中，这类对象称为ConfigMap，由键值对组成，值可以是文本或文件。
+
+应用不需要直接读取ConfigMap，甚至不需要知道它的存在。表的内容会通过环境变量或文件的形式传递到容器中，当然你也可以选择通过命令行参数的方式进行传递。
