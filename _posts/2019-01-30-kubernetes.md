@@ -2392,3 +2392,304 @@ env:
 k8s允许将配置分割到不同的对象中，这类对象称为ConfigMap，由键值对组成，值可以是文本或文件。
 
 应用不需要直接读取ConfigMap，甚至不需要知道它的存在。表的内容会通过环境变量或文件的形式传递到容器中，当然你也可以选择通过命令行参数的方式进行传递。
+
+我们使用create configmap来创建一个configmap。
+
+```sh
+$ kubectl create configmap fortune-config --from-literal=sleep-interval=25
+```
+
+之后查看configmap。
+
+```sh
+$ kubectl get cm
+NAME             DATA   AGE
+fortune-config   1      5s
+$ kubectl describe cm fortune-config
+Name:         fortune-config
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+
+Data
+====
+sleep-interval:
+----
+25
+```
+
+configmap中的关键字只能包含字母、数字、破折线、下划线、点号。
+
+要建立一个包含多个键值对的configmap。
+
+```sh
+$ kubectl create configmap myconfgimap --from-literal=foo=bar --from-literal=bar=baz
+```
+
+我们也可以使用定义文件的方式来创建configmap。
+
+```sh
+$ kubectl get configmap fortune-config -o yaml
+apiVersion: v1
+data:
+  sleep-interval: "25"
+kind: ConfigMap
+metadata:
+  creationTimestamp: "2019-02-20T01:54:23Z"
+  name: fortune-config
+  namespace: default
+  resourceVersion: "231594"
+  selfLink: /api/v1/namespaces/default/configmaps/fortune-config
+  uid: 723fd4dc-34b2-11e9-b149-0800279f3491
+```
+
+你也可以通过配置文件来创建configmap。
+
+```sh
+$ kubectl create configmap my-config --from-file=config-file.conf
+```
+
+在这种情况下，my-config中仅包含一对键值对，键为文件名，值为文件内容。你也可以手动设置键。
+
+```sh
+$ kubectl create configmap my-config --from-file=customkey=config-file.conf
+```
+
+--from-file和--from-literal一样允许出现多次，并且支持混用。
+
+除了导入一个文件，你还可以导入整个目录。
+
+```sh
+$ kubectl create configmap my-config --from-file=/path/to/dir
+```
+
+这等价于为/path/to/dir目录下的每个文件在my-config中创建一个键值对，键为文件名，值为文件内容。
+
+![](https://raw.githubusercontent.com/taodaling/assets/master/images/2019-01-30-kubernetes/configmap.PNG)
+
+要将configmap中的值以环境变量形式进行传递。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+ name: fortune-env-from-configmap
+spec:
+ containers:
+ - image: luksa/fortune:env
+   env:
+   - name: INTERVAL
+     valueFrom:
+       configMapKeyRef:
+         name: fortune-config
+         key: sleep-interval
+```
+
+但是如果你要暴露configmap中的所有键值对作为环境变量，一个个设置会很麻烦，k8s允许我们直接导入整个configmap。
+
+```yaml
+spec:
+ containers:
+ - image: some-image
+   envFrom:
+   - prefix: CONFIG_ #所有的键都会带上CONFIG_前缀
+     configMapRef:
+       name: my-config-map
+```
+
+在导入整个configmap时，如果键包含类似破折号或者点号等不允许出现在环境变量名称中的符号，那么这个键和对应的值会被跳过（不会被设置到环境变量中）。
+
+configmap不能直接使用于命令行参数传递，但是你可以通过环境变量间接使用。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+ name: fortune-args-from-configmap
+spec:
+ containers:
+ - image: luksa/fortune:args
+   env:
+   - name: INTERVAL
+     valueFrom:
+       configMapKeyRef:
+         name: fortune-config
+         key: sleep-interval
+   args: ["$(INTERVAL)"] 
+```
+
+一般环境变量和命令行参数是用来传递较短的配置项。configmap中的值可以是整个文件，你可以通过一种特殊的卷——configMap类型来将configmap中的键值对以文件的形式暴露给容器。
+
+configMap类型的卷会将configmap中的每个键值对都作为一个独立的文件进行暴露。容器可以通过读取卷下的文件来获取配置信息。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+ name: fortune-configmap-volume
+spec:
+ containers:
+ - image: nginx:alpine
+   name: web-server
+   volumeMounts:
+ ...
+   - name: config
+   mountPath: /etc/nginx/conf.d
+   readOnly: true
+ ...
+ volumes:
+ ...
+ - name: config
+   configMap:
+     name: fortune-config
+ ...
+```
+
+你也可以仅通过configVolume暴露一部分的配置。
+
+```yaml
+volumes:
+ - name: config
+   configMap:
+     name: fortune-config
+     items:
+     - key: my-nginx-config.conf
+       path: gzip.conf 
+```
+
+如果单独指定暴露项，必须为每个不同的暴露项指定一个文件。
+
+由于之前都是以目录的形式挂载，以目录形式挂载的问题在于会覆盖同名目录。比如你将卷挂载到/etc，那么原先/etc下的所有内容都会丢失。这是linux的底层挂载机制导致的，当你挂载一个卷到非空目录，该非空目录下的所有原先文件都会丢失。为了避免影响原先的文件，我们不能以目录的形式挂载，而选择以文件的形式挂载。
+
+```yaml
+spec:
+ containers:
+ - image: some/image
+   volumeMounts:
+   - name: myvolume
+     mountPath: /etc/someconfig.conf
+     subPath: myconfig.conf 
+```
+
+默认情况下所有configMap卷下的文件的权限都是664。你可以变更defaultMode模式来修改权限。
+
+```yaml
+volumes:
+- name: config
+  configMap:
+    name: fortune-config
+    defaultMode: "6600"
+```
+
+### 热更新配置
+
+使用环境变量和命令行参数的缺点是无法在容器启动后更新配置信息。但是使用configmap结合卷的方式允许你在不重启容器的前提下更新配置信息。
+
+当你更新了configmap，所有引用它的卷都会被更新。因此只要进程能检测到配置文件更新并重载它们就可以实现热更新。注意热更新仅在挂载卷到目录时生效，而挂载单独文件是无效的。
+
+k8s也在支持在更新完配置文件后向容器发送一个信号。
+
+也许你会好奇，是否有可能在k8s更新文件到一半，你的应用就发现了配置文件变动并重载。但是这是不可能的，因为k8s使用了链接的方式，使得更新的完成对于我们来说是原子性操作。卷的挂载目录实际上是链接，当你变更了configmap后，k8s会创建一个新的目录，重新生成文件后替换链接。
+
+### secrets
+
+我们之前谈论的都是向容器传递非敏感信息，但是实际配置中往往会包含诸如密钥证书等敏感信息。要保存这类信息，k8s提供了一类称为Secret的资源。Secret类似Configmap，它们保存的也是键值对。它们的用法也是类似，你可以将键值对通过文件或环境变量的方式传递到容器中。
+
+k8s通过确保只有pods需要敏感数据时才为pods所在节点提供secret数据，并且secret数据只能保存在内存中，而不会写入到物理存储中。
+
+在主节点上，secret过去以非加密的形式存放，这意味着必须先确保master是安全的，才能保证secret中存储的数据是安全的。这不仅仅意味着我们需要保证master是安全的，还要保证，未经授权的用户不能使用API服务器，因为任何人建立的pod都有权访问secret中的数据。在k8s的1.7版本后，主节点以加密的形式存储secret。
+
+在使用secret之前，我们可以通过describe pods查看任意pods的描述信息。其中应该包含这样一段内容。
+
+```yaml
+......
+  Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from default-token-rb9kd (ro)
+......
+  default-token-rb9kd:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  default-token-rb9kd
+    Optional:    false
+......
+```
+
+每个pods都有一个secret类型的卷自动挂载到它上面。由于secret也是一类资源，我们可以列出所有的secret。
+
+```sh
+$ kubectl get secrets
+NAME                  TYPE                                  DATA   AGE
+default-token-rb9kd   kubernetes.io/service-account-token   3      9d
+tls-secret            kubernetes.io/tls                     2      44h
+
+$ kubectl describe secrets default-token-rb9kd
+Name:         default-token-rb9kd
+Namespace:    default
+Labels:       <none>
+Annotations:  kubernetes.io/service-account.name: default
+              kubernetes.io/service-account.uid: abb56903-2da0-11e9-a6d4-0800279f3491
+
+Type:  kubernetes.io/service-account-token
+
+Data
+====
+namespace:  7 bytes
+token:      eyJhbGciOiJSUzI1NiIsImtpZCI6IiJ9...
+ca.crt:     1066 bytes
+```
+
+可以看到一个secret对象包含了三个键值对，ca.crt、namespace、token。这里面包含了能让你的pod和API服务交流所需的所有信物。当然你需要能将你的应用和k8s解耦，但是如果应用必须直接和k8s交互，你就需要这些信物了。
+
+首先我们创建一个密钥和证书文件。
+
+```sh
+$ openssl genrsa -out https.key 2048
+$ openssl req -new -x509 -key https.key -out https.cert -days 3650 -subj /CN=www.kubia-example.com
+$ echo bar > foo
+```
+
+之后根据这些文件创建secret对象。
+
+```sh
+$ kubectl create secret generic fortune-https --from-file=https.key --from-file=https.cert --from-file=foo
+secret/fortune-https created
+```
+
+这里我们创建了一个generic类型的secret，除了generic类型外，你还可以创建tls类型的secret。
+
+查看之前创建的secret的yaml格式。
+
+```sh
+$ kubectl get secret fortune-https -o yaml
+apiVersion: v1
+data:
+  foo: YmFyIA0K
+  https.cert: LS0tLS1CRUdJTiBDRVJUSUZJQ0......
+  https.key: LS0tLS1CRUdJTiBSU0EgUFJJ......
+kind: Secret
+metadata:
+  creationTimestamp: "2019-02-20T06:22:00Z"
+  name: fortune-https
+  namespace: default
+  resourceVersion: "249305"
+  selfLink: /api/v1/namespaces/default/secrets/fortune-https
+  uid: d4f5d26c-34d7-11e9-b149-0800279f3491
+type: Opaque
+```
+
+可以看到我们之前的foo:bar现在变成了foo:YmFyIA0K，这是因为保存在secret中的值会通过Base64编码。而ConfigMap存储的明文，因此你可以通过定义文件来创建编辑ConfigMap，但不能以相同的方式创建Secret。
+
+之所以选择使用Base64的原因很简单，为了在值含有二进制数据时，值能在定义文件中正常展示。你也可以使用secret来存储一些二进制数据，但是要记住secret的最大长度不能超过1MB。
+
+事实上你也可以通过stringData项来为secret追加明文属性。但是stringData时只写的。
+
+```yaml
+kind: Secret
+apiVersion: v1
+stringData:
+ foo: plain text
+data:
+ https.cert: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCekNDQ...
+ https.key: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcE...
+```
+
+当你将secret通过secret类型卷暴露给容器时，会将secret中的解密后保存到文件中，规则类似于configmap。
