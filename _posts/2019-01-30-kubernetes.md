@@ -1,5 +1,5 @@
 ---
-categories: tool
+.categories: tool
 layout: post
 ---
 - Table
@@ -1994,6 +1994,8 @@ kubia-vs84r   1/1     Running   0          23m     172.17.0.8    minikube   <non
 
 可以看到列出了所有支持kubia-headless的pods信息。
 
+去中心服务管理的pods可以以特殊的规则相互访问。其中一个pod可以以`<pod>.<service>.<namespace>.svc.cluster.local`来访问其他的处于去中心服务管理的pod。比如default命名空间下服务名为service，两个pod，a、b。b可以以a.service.default.svc.cluster.local来访问a。
+
 ## 卷
 
 由于容器的文件系统是镜像提供的，因此你在容器中对文件系统的写入不会被持久化。容器一旦重启，所有的写入都会丢失。
@@ -2284,7 +2286,17 @@ parameters: #传递给供应器的参数
 创建了StorageClass后，我们可以在持久化卷声明定义中引用StorageClass。之后新建文件mongodb-pvc-dp.yml。
 
 ```yaml
-
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-pvc 
+spec:
+  storageClassName: fast
+  resources:
+    requests:
+      storage: 100Mi
+  accessModes:
+    - ReadWriteOnce
 ```
 
 创建资源后查看状态。
@@ -2775,3 +2787,185 @@ K8s为我们提供了StatefulSets（状态集）来解决这些问题。状态�
 要增加状态集合的副本数，会自动创建多个对象，pod、持久化卷声明。但是在减少状态集合的副本数时仅会删除pod。因为带状态的pod意味着运行带状态的应用，即应用的状态（持久化在卷上）是非常重要的。如果在副本移除时删除卷声明，会顺带清空卷内容，这可能会带来灾难性后果。尤其在你缩减副本数只需要修改replica属性这么简单，因此你被要求必须手动删除持久化卷声明来释放底层的存储。
 
 实际上在你缩减了副本并释放出空余的持久化卷声明后，之后增加副本会重用这个持久化卷声明。这意味着如果你是因为不小心缩减了副本，那么你可以通过增加副本来恢复到之前的状态而不会丢失数据。
+
+K8s必须保证同一个状态集合不会有相同序号的pod出现，因此它必须在启动pod之前确保之前的同序号pod确实已经停止了，否则拥有相同域名，并向相同卷写入会带来严重问题。
+
+要部署你的应用，你需要创建三个资源。持久化卷用于存储数据。一个状态集合需要的去中心服务。以及状态集合本身。
+
+由于使用的是minikube，所以我们先创建持久化存储动态供应器。
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast
+provisioner: k8s.io/minikube-hostpath 
+parameters: 
+  type: pd-ssd
+```
+
+之后创建去中心服务。
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia
+spec:
+  clusterIP: None
+  selector:
+    app: kubia
+  ports:
+    - name: http
+      port: 80
+```
+
+去中心服务为我们带来pods之间相互发现的能力。最后创建状态集合。
+
+```yaml
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: kubia
+spec:
+  serviceName: kubia
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: kubia
+    spec:
+      containers:
+      - name: kubia
+        image: luksa/kubia-pet
+        ports:
+        - name: http
+          containerPort: 8080
+        volumeMounts:
+        - name: data
+          mountPath: /var/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: fast
+      resources:
+        requests:
+          storage: 1Mi
+      accessModes:
+      - ReadWriteOnce
+```
+
+在状态集合的清单文件中，我们增加了volumeClaimTemplates，定义了一个名字为data的卷声明模板，它会为容器提供卷。
+
+启动后查看pods信息。
+
+```sh
+$ kubectl get pods
+NAME      READY   STATUS             RESTARTS   AGE
+kubia-0   0/1     ImagePullBackOff   0          6m45s
+```
+
+与副本集不同，副本集一开始会创建所有的副本，而状态集合仅会在上一个pod创建成功后才创建下一个pod，这是为了避免竞争。
+
+等待一会后，重新看看创建结果。
+
+```sh
+$ kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+kubia-0   1/1     Running   0          9m54s
+kubia-1   1/1     Running   0          78s
+```
+
+接下来看看两个pods的卷信息。
+
+```sh
+$ kubectl get pods kubia-0 -o yaml
+...
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: data-kubia-0
+...
+$ kubectl get pods kubia-1 -o yaml
+...
+volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: data-kubia-1
+...
+```
+
+接下来我们利用API服务器作为代理，为我们转发请求。访问的地址为：
+
+`<apiServerHost>:<port>/api/v1/namespaces/default/pods/kubia-0/proxy/<path>`
+
+但是由于API服务器加密过了，需要进行授权后才能访问。我们可以手动启动代理，跳过身份验证的过程。
+
+```sh
+$ kubectl proxy
+Starting to serve on 127.0.0.1:8001
+```
+
+之后提交数据。
+
+```sh
+$ curl -s localhost:8001/api/v1/namespaces/default/pods/kubia-0/proxy/
+You've hit kubia-0
+Data stored on this pod: No data posted yet
+```
+
+上面整个请求要经过两个代理，第一个是kubectl启动的代理，其后是API服务器自带的代理，之后请求会直接提交给pod。
+
+接下来我们发送POST请求，它会存储POST请求体中的所有内容到本地文件中。
+
+```sh
+$ curl -s localhost:8001/api/v1/namespaces/default/pods/kubia-0/proxy/ -d "Hello, world! kubia-0" -X POST
+Data stored on pod kubia-0
+$ curl -s localhost:8001/api/v1/namespaces/default/pods/kubia-0/proxy/
+You've hit kubia-0
+Data stored on this pod: Hello, world! kubia-0
+```
+
+之后看看另外一个kubia-1会说些什么。
+
+```sh
+$ curl -s localhost:8001/api/v1/namespaces/default/pods/kubia-1/proxy/
+You've hit kubia-1
+Data stored on this pod: No data posted yet
+```
+
+如我们所料，每个pod都有自己独立的存储，互不干扰。接下来来看看存储是否会持久。
+
+```sh
+$ kubectl delete pods kubia-0
+pod "kubia-0" deleted
+$ kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+kubia-0   1/1     Running   0          8s
+kubia-1   1/1     Running   0          35m
+$ kubectl get pods kubia-0 -o yaml
+...
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: data-kubia-0
+...
+```
+
+之后重新请求kubia-0。
+
+```sh
+$ curl -s localhost:8001/api/v1/namespaces/default/pods/kubia-0/proxy/
+You've hit kubia-0
+Data stored on this pod: Hello, world! kubia-0
+```
+
+这意味着pod重启后的名称和存储都是不变的。接下来我们实验能在kubia-1访问kubia-0。
+
+```sh
+$ kubectl exec kubia-1 -- curl -s kubia-0.kubia:8080
+You've hit kubia-0
+Data stored on this pod: Hello, world! kubia-0
+```
+
