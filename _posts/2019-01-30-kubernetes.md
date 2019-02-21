@@ -2788,7 +2788,7 @@ K8s为我们提供了StatefulSets（状态集）来解决这些问题。状态�
 
 实际上在你缩减了副本并释放出空余的持久化卷声明后，之后增加副本会重用这个持久化卷声明。这意味着如果你是因为不小心缩减了副本，那么你可以通过增加副本来恢复到之前的状态而不会丢失数据。
 
-K8s必须保证同一个状态集合不会有相同序号的pod出现，因此它必须在启动pod之前确保之前的同序号pod确实已经停止了，否则拥有相同域名，并向相同卷写入会带来严重问题。
+K8s必须保证同一个状态集合不会有相同序号的pod出现，因此它必须在启动pod之前确保之前的同序号pod确实已经停止了，否则拥有相同域名，并向相同卷写入会带来严重问题。但是一旦某个节点突然无法连接，那么上面的kubelet也就不会继续向主节点报告上面pod的状态。而k8s无法确认状态，因此不会贸然重新启动一个替代容器。实际上，在这种情况下，系统管理员必须手动告诉k8s这个pod已经失败了，有两种手段，一种是删除pod，一种是删除所在的节点。
 
 要部署你的应用，你需要创建三个资源。持久化卷用于存储数据。一个状态集合需要的去中心服务。以及状态集合本身。
 
@@ -2968,4 +2968,65 @@ $ kubectl exec kubia-1 -- curl -s kubia-0.kubia:8080
 You've hit kubia-0
 Data stored on this pod: Hello, world! kubia-0
 ```
+
+接下来我们还要讨论一个重要话题，发现对等（peer）。能发现对等是集群应用的一个重要需求。每个状态集合的成员都应该能很容易地发现所有其他其它成员。当然你可以选择直接请求API服务器，但是k8s的一个目标就是让应用对k8s彻底解耦，因此这个方案是与k8s的目标背道而驰的。
+
+取决于你对DNS的了解程度，你可能知道什么是A、CNAM或MX记录，但是存在一个鲜为人知的DNS记录——SRV记录。SRV记录用于指示一个服务器用于提供某项服务的域名和端口。K8s会为去中心服务所管理的pod创建一条SRV记录。
+
+你可以在一个临时pod中通过dig这个DNS查看工具列出你的SVC集合。
+
+```sh
+$ kubectl run -it srvlookup --image=tutum/dnsutils --rm --restart=Never -- dig SRV kubia.default.svc.cluster.local
+
+; <<>> DiG 9.9.5-3ubuntu0.2-Ubuntu <<>> SRV kubia.default.svc.cluster.local
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 34613
+;; flags: qr aa rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 2
+
+;; QUESTION SECTION:
+;kubia.default.svc.cluster.local. IN    SRV
+
+;; ANSWER SECTION:
+kubia.default.svc.cluster.local. 5 IN   SRV     0 50 80 kubia-0.kubia.default.svc.cluster.local.
+kubia.default.svc.cluster.local. 5 IN   SRV     0 50 80 kubia-1.kubia.default.svc.cluster.local.
+
+;; ADDITIONAL SECTION:
+kubia-0.kubia.default.svc.cluster.local. 5 IN A 172.17.0.3
+kubia-1.kubia.default.svc.cluster.local. 5 IN A 172.17.0.7
+
+;; Query time: 19 msec
+;; SERVER: 10.96.0.10#53(10.96.0.10)
+;; WHEN: Thu Feb 21 13:57:32 UTC 2019
+;; MSG SIZE  rcvd: 339
+
+pod "srvlookup" deleted
+```
+
+ANSWER SECTION下列出了两个SRV记录，对应kubia服务后的两个pods。每个pod还有自己的一个额外字段，显示在ADDITIONAL SECTION下。
+
+接下来我们修改镜像，让其中的服务器通过查询DNS SRV获取其它所有对等信息，之后请求时合并其它对等的数据一同返回。
+
+```sh
+$ kubectl edit statefulset kubia
+```
+
+之后将spec.replicas设置为3，spec.template.spec.containers.image设置为luksa/kubia-pet-peers。之后删除原来的两个pods，kubia-0和kubia-1。
+
+```sh
+$ kubectl delete pods kubia-0 kubia-1
+```
+
+开启代理后重新请求服务。
+
+```sh
+$ curl -s localhost:8001/api/v1/namespaces/default/pods/kubia-1/proxy/
+You've hit kubia-1
+Data stored in the cluster:
+- kubia-1.kubia.default.svc.cluster.local: No data posted yet
+- kubia-0.kubia.default.svc.cluster.local: Hello, world! kubia-0
+- kubia-2.kubia.default.svc.cluster.local: No data posted yet
+```
+
+可以看到通过DNS的SRV解析我们找到了集群中的其它对等。
 
