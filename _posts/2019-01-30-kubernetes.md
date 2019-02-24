@@ -3030,3 +3030,64 @@ Data stored in the cluster:
 
 可以看到通过DNS的SRV解析我们找到了集群中的其它对等。
 
+## 计算资源管理
+
+当创建一个pod时，你可以指定每个容器需要的CPU和内存的数量以及上限。pod的CPU和内存的需求量是所有容器的总和。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: requests-pod
+spec:
+  containers:
+  - image: busybox
+    command: ["dd", "if=/dev/zero", "of=/dev/null"]
+    name: main
+    resources:
+      requests:
+       cpu: 200m
+       memory: 10Mi
+```
+
+上面cpu的200m指的是200 milicores，一个core等于1000 milicores，因此200m等于1/5个CPU核心。
+
+如果你不指定需要的资源量，那么就意味着它可能得到任意的资源量，有可能是0。这对于一些低优先级的批处理任务是可行的，但是对于服务器来说是无法接受的。
+
+创建pod后，进入pod中使用top命令查看资源的使用量。busybox会消耗所有的CPU资源，但是是单线程的，因此最多占用一个核心。
+
+```sh
+Mem: 1971376K used, 67248K free, 23460K shrd, 84728K buff, 1105092K cached
+CPU: 26.1% usr 38.8% sys  0.1% nic 34.5% idle  0.0% io  0.0% irq  0.3% sirq
+Load average: 1.71 0.97 0.57 5/817 23
+  PID  PPID USER     STAT   VSZ %VSZ CPU %CPU COMMAND
+    1     0 root     R     1284  0.0   1 50.7 dd if /dev/zero of /dev/null
+   11     0 root     S     1292  0.0   0  0.0 top
+   16     0 root     R     1292  0.0   0  0.0 top
+```
+
+这里显示50%是因为CPU是2核心的，它占用了50%即完全占用了某个CPU核心。虽然我们在清单文件中配置了要求20%的CPU核心，但是这里使用了100%的CPU核心，这是因为在清单文件中的是下限要求而非上限。
+
+我们需要理解一下k8s对于带下限要求的pod的调度策略。每个节点都有自己对应的资源，资源的一部分是已经分配的，而其余的则是未分配的。当调度pod时，调度器会选择一个未分配资源多于pod总要求的节点，并将pod调度到上面。但是如果不存在满足需求的节点，那么pod就不会被调度。一个节点的已调度资源是指上面所有的pod所需资源下限的总和，因此一个单核CPU的节点能够调度五个上面的requests-pod，而非两个。
+
+如果同时存在多个可以调度的节点，k8s会根据优先级函数来决定应该选择哪一个。其中有两种优先级函数是基于请求资源数的：LeastRequestedPriority和MostRequestedPriority。前者选择选择拥有最多未分配资源的，而后者选择拥有最少未分配资源的节点。使用LeastRequestedPriority可以帮助使得负载在你的集群中进行分摊，而使用MostRequestedPriority可以帮助你将你的pod紧密排列减少实际需要的节点数。
+
+```sh
+$ kubectl describe nodes
+...
+Capacity:
+ cpu:                2
+ ephemeral-storage:  16888216Ki
+ hugepages-2Mi:      0
+ memory:             2038624Ki
+ pods:               110
+Allocatable:
+ cpu:                2
+ ephemeral-storage:  15564179840
+ hugepages-2Mi:      0
+ memory:             1936224Ki
+ pods:    110
+...
+```
+
+capacity是你的节点总共可用资源，而allocatable是你的节点的未分配资源。
