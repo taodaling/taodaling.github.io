@@ -3032,6 +3032,8 @@ Data stored in the cluster:
 
 ## 计算资源管理
 
+### 请求资源
+
 当创建一个pod时，你可以指定每个容器需要的CPU和内存的数量以及上限。pod的CPU和内存的需求量是所有容器的总和。
 
 ```yaml
@@ -3091,3 +3093,209 @@ Allocatable:
 ```
 
 capacity是你的节点总共可用资源，而allocatable是你的节点的未分配资源。
+
+接下来我们创建一个需要800m CPU的busybox。
+
+```sh
+$ kubectl run requests-pod-2 --image=busybox --restart Never --requests="cpu=800m,memory=20Mi" -- dd if=/dev/zero of=/dev/null
+pod/requests-pod-2 created
+$ kubectl get pods requests-pod-2
+NAME             READY   STATUS    RESTARTS   AGE
+requests-pod-2   1/1     Running   0          2m16s
+```
+
+由于我们使用了总共200m+800m=1000m CPU，即完整占用了一个核心。按理来说，我们的minikube节点拥有两个核心，因此，应该还可以再提供一个CPU的资源。让我们试试
+
+```sh
+$ kubectl run requests-pod-3 --image=busybox --restart Never --requests="cpu=1,memory=20Mi" -- dd if=/dev/zero of=/dev/null
+pod/requests-pod-3 created
+$ kubectl get pods requests-pod-3
+NAME             READY   STATUS    RESTARTS   AGE
+requests-pod-3   0/1     Pending   0          32s
+```
+
+可以看到我们的requests-pod-3始终没有变成准备状态。
+
+```sh
+$ kubectl describe pods requests-pod-3
+...
+Events:
+  Type     Reason            Age                  From               Message
+  ----     ------            ----                 ----               -------
+  Warning  FailedScheduling  115s (x2 over 2m1s)  default-scheduler  0/1 nodes are available: 1 Insufficient cpu.
+```
+
+可以看到k8s提示没有充足的一个CPU。
+
+```sh
+$ kubectl describe pods requests-pod-3
+ Namespace                  Name                                        CPU Requests  CPU Limits  Memory Requests  Memory Limits  AGE
+  ---------                  ----                                        ------------  ----------  ---------------  -------------  ---
+  default                    requests-pod                                200m (10%)    0 (0%)      10Mi (0%)        0 (0%)         47h
+  default                    requests-pod-2                              800m (40%)    0 (0%)      20Mi (1%)        0 (0%)         15m
+  kube-system                coredns-86c58d9df4-4cf2s                    100m (5%)     0 (0%)      70Mi (3%)        170Mi (8%)     14d
+  kube-system                coredns-86c58d9df4-c5q79                    100m (5%)     0 (0%)      70Mi (3%)        170Mi (8%)     14d
+  kube-system                default-http-backend-5ff9d456ff-tfzkw       20m (1%)      20m (1%)    30Mi (1%)        30Mi (1%)      7d23h
+  kube-system                etcd-minikube                               0 (0%)        0 (0%)      0 (0%)           0 (0%)         14d
+  kube-system                kube-addon-manager-minikube                 5m (0%)       0 (0%)      50Mi (2%)        0 (0%)         14d
+  kube-system                kube-apiserver-minikube                     250m (12%)    0 (0%)      0 (0%)           0 (0%)         14d
+  kube-system                kube-controller-manager-minikube            200m (10%)    0 (0%)      0 (0%)           0 (0%)         14d
+  kube-system                kube-proxy-kz8cq                            0 (0%)        0 (0%)      0 (0%)           0 (0%)         17m
+  kube-system                kube-scheduler-minikube                     100m (5%)     0 (0%)      0 (0%)           0 (0%)         14d
+  kube-system                kubernetes-dashboard-ccc79bfc9-hgz78        0 (0%)        0 (0%)      0 (0%)           0 (0%)         14d
+  kube-system                nginx-ingress-controller-7c66d668b-sljhj    0 (0%)        0 (0%)      0 (0%)           0 (0%)         7d23h
+  kube-system                storage-provisioner                         0 (0%)        0 (0%)      0 (0%)           0 (0%)         14d
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests     Limits
+  --------           --------     ------
+  cpu                1775m (88%)  20m (1%)
+  memory             250Mi (13%)  370Mi (19%)
+  ephemeral-storage  0 (0%)       0 (0%)
+```
+
+可以看到我们的minikube不仅需要为用户的pods提供计算资源，还需要对系统的pods提供计算资源，因此剩余的CPU是不足一核心的。
+
+为了释放足够的CPU资源，我们需要清理之前的两个pods，总共释放1核CPU资源。删除了两个CPU后，可以看到requests-pod-3这个pod变成了准备状态。
+
+到目前为止我们仅了解了如何向k8s通过request索取资源。CPU 请求不仅可以用于索取资源，还会影响到未分配资源的分配。未分配资源会按照请求资源的比例分配，比如两个pod，A请求1核， B请求0.2核，那么剩余的资源会按照5:1分配给A和B。
+
+但是这样未必合理，如果一个容器需要尽可能多地使用CPU资源，而其余的在特定时刻保持空闲状态，这样前者就应该有机会使用所有未分配的资源。
+
+### 定义和请求自定义资源
+
+k8s允许你向节点增加自定义资源并在pods的请求中做出要求。一开始这些资源称为不透明整数资源，但是在k8s的1.8版本被替换为扩展资源。
+
+首先你要通过增加节点对象的capacity字段让k8s意识到你的自定义资源。这可以通过执行一个PATCH请求，资源名称可以是任何，比如example.org/myresource，只需要不以kubernetes.io域名为开头。数量必须是整数，这个值会自动拷贝到allocatable字段。
+
+在创建pods时，你可以在resources.requests字段中使用之前定义的资源名。调度器会确保pod仅会被调度到拥有充分资源的节点上。而每个节点上部署的pod都会减少这个节点上的未分配资源数量。
+
+### 限制资源上限
+
+设置资源请求字段帮助k8s确定pod需要的最少资源，现在我们来说明如何确定一个pod能使用的资源上限。CPU是可以压缩的资源，意味着一个容器可以使用的数量可以被限流，而不会对这个容器上运行的进程造成不利的影响。而内存则不同，它是不可压缩的。一旦进程得到了一块内存，除非进程自己释放这块内存，任何人都不能从这个进程手上抢走它。这也是为什么我们必须限制为容器提供的内存上限。
+
+如果不为内存指定上限，一个容器可以吃掉所有节点上的内存，从而影响到节点上其它所有的容器。为了防止这种情况，k8s允许你为每个容器指定资源使用上限。
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: limited-pod
+spec:
+  containers:
+  - image: busybox
+    command: ["dd", "if=/dev/zero", "of=/dev/null"]
+    name: main
+    resources:
+      limits:
+        cpu: 200m
+        memory: 20Mi
+```
+
+上面我们没有指定需要的资源，因此k8s会认为上限就是需要的资源。
+
+与资源需求不同，资源上限并不受可分配资源的约束，因此上限之和可以超过100%。这会导致一个重要的现象，当node的资源被完全耗尽，一部分容器就会被选择杀死。
+
+当一个容器中的进程尝试使用超过限制数量的资源，会发生什么呢？之前了解过CPU是可以压缩的，因此当一个进程尝试使用更多CPU资源时，它的CPU资源会被限流，就跟运行在一个较慢的机器上一样。而内存则不同，当一个进程尝试分配超过限制的内存，进程会被杀死并结束容器。但是由于kubelet会重启容器，因此你可能不会发现。但是如果一个容器不断应为超出限制而被杀死，那么kubelet会自动增加重启的间隔时间。
+
+创建limited-pod后，通过top命令查看内部的进程状态。
+
+```sh
+Mem: 1976908K used, 61716K free, 14388K shrd, 64724K buff, 1134988K cached
+CPU: 20.9% usr 44.0% sys  0.0% nic 34.7% idle  0.0% io  0.0% irq  0.3% sirq
+Load average: 1.22 1.46 1.47 3/839 11
+  PID  PPID USER     STAT   VSZ %VSZ CPU %CPU COMMAND
+    1     0 root     R     1284  0.0   1 10.6 dd if /dev/zero of /dev/null
+    6     0 root     R     1292  0.0   1  0.0 top
+```
+
+可以看到确实限制了使用的CPU。但是可以发现top的返回存在奇怪的地方，Mem显示的值是2Gib，而非限定的200Mib。这是因为对资源的限制对于容器是无感知的（虽然确实被限制了），容器看到资源是节点的状态。
+
+这会在很多情况下带来问题，比如当你的应用按照机器可用内存自行分配最大内存时。比如JVM，如果你不指定-Xmx参数，那么JVM会自动根据机器的总内存确定实际堆大小上限。即使你指定了-Xmx参数，可能还会遇到内存溢出的问题，因为JVM还会分配堆外内存，好在新版本的JVM通过-XX:MaxDirectMemorySize参数限制了最大可用的堆外内存来减轻了问题。
+
+对于CPU也是如此，如果你的pod调度到拥有64核CPU的节点上，即使你将CPU限制设置为一个核心，但是并不会影响你的容器内看到的是64核心。并且限制为1核心，实际上，你的容器会得到1/64的CPU时间片，但是这些时间片可能会属于不同的核心，即无法保证你的容器运行在单一的核心上。
+
+看上去好像不会有什么问题，但是在一些场景却会带来灾难性的结果。一些应用汇根据当前的CPU核心数来决定启动多少个工作线程。这会导致过多的线程数，但是实际分配到的时间片不足，这些线程会发生激烈竞争，同样也会浪费内存。
+
+要获取实际可用的资源，你可以通过环境变量的形式传入，或者读取/sys/fs/cgroup/cpu/cpu.cfs_quota_us和/sys/fs/cgroup/cpu/cpu.cfs_period_us。
+
+由于资源上限总和可能超过100%，因此会出现节点资源不足的情况。比如两个Pod，A和B，A使用了90%的内存，而B突然请求20%的内存，但是此时节点已经无法提供充足的资源了，那么应该决定杀死哪个容器呢。k8s会为你做出合适的决定，但是你需要一种方式来告知k8s哪一个pod拥有更高的优先级。k8s将pod分类为三种服务质量（Quality of Service，QoS）。
+
+- BestEffort（最低优先级）
+- Burstable
+- Guaranteed（最高优先级）
+
+你可能会觉得可以通过清单文件的某个字段来配置QoS类别，但是实际上并不能。QoS类别是从容器的请求资源和上限中推导出来的。
+
+最低优先级的是BestEffort类，它会分配给哪些既没有指定请求资源又没有指定上限的容器。这类容器不能保证任何资源，最坏情况下，可能根本无法得到CPU时间片，同样因为缺乏上限，因此可能会使用超乎想象的内存，因此会为了释放内存而作为第一个牺牲的对象。
+
+在另外一端则是Guaranteed，这个类别会分配给所有资源的上限和请求量相同的容器。被选中为Guaranteed，需要保证三个条件。
+
+- 必须设置CPU和内存的请求量和上限
+- 每个容器都需要进行设置
+- 请求量和上限要相等
+
+由于没有显示设置请求量，请求量会取上限的值，因此可以仅设置上限就会被认作Guaranteed类QoS。Guaranteed类型的容器虽然拥有更高的优先级，但是无法获得额外的资源。
+
+所有不能归类为BestEffort和Guaranteed的容器都认为是Burstable。而对于pod来说，如果它的所有容器共享相同的QoS，则它的QoS与内部容器相同，否则pod的QoS为Burstable。
+
+当遇到资源不足时，QoS分类会决定哪个容器需要被第一个杀死以为更高优先级的pod提供资源。杀死的顺序为BestEffort，Burstable，Guaranteed。
+
+但是如果有两个相同QoS分类的容器，那么该先杀死哪个呢？每个运行中的进程都有一各内存溢出（OutOfMemory，OOM）分数，k8s通过比较OOM分数，最高的分数的容器会先被杀死。OOM分数通过两个东西计算得到：进程消耗的内存以及一个固定的OOM分数调整，调整时间基于pod的QoS分类以及容器请求的内存。
+
+### 为命名空间指定默认资源请求和限制
+
+除了为每个容器指定资源上下限，你也可以通过创建一个LimitRange类型资源，他不仅允许你指定容器资源的上下限，同时还能为没有指定下限的容器提供默认下限。
+
+![](https://raw.githubusercontent.com/taodaling/assets/master/images/2019-01-30-kubernetes/LimitRange.PNG)
+
+LimitRange资源由LimitRanger进场控制插件所使用，当一个清单文件提交到API服务器，LimitRanger插件会校验pod的spec部分，如果校验失败，清单会被迅速拒绝。一个使用LimitRanger的非常好的例子是防止用户创建资源请求量超过所有节点资源的pod，如果没有LimitRange，那么API服务器会很愉快地接收这个pod，但是之后就对这个pod无从下手。
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: example
+spec:
+  limits:
+  - type: Pod #指定pod整体的限制
+    min:
+      cpu: 50m
+      memory: 5Mi
+    max:
+      cpu: 1
+      memory: 1Gi
+  - type: Container
+    defaultRequest: #为没有显示指定CPU和内存请求的容器提供默认值
+      cpu: 100m
+      memory: 10Mi
+    default: #为没有显式指定CPU和内存上限的容器提供默认值
+      cpu: 200m
+      memory: 100Mi
+    min:
+      cpu: 50m
+      memory: 5Mi
+    max:
+      cpu: 1
+      memory: 1Gi
+    maxLimitRequestRatio: #上限/下限的上限
+      cpu: 4
+      memory: 10
+  - type: PersistentVolumeClaim
+    min:
+      storage: 1Gi
+    max:
+      storage: 10Gi
+```
+
+LimitRange仅限制存在于相同命名空间下的资源，并且仅会对创建后提交的清单文件进行控制。
+
+之后创建一个超过上限的pod试试。
+
+```sh
+$ kubectl run requests-pod-4 --image=busybox --restart Never --requests="cpu=1200m,memory=2000Mi" -- dd if=/dev/zero of=/dev/null
+The Pod "requests-pod-4" is invalid:
+* spec.containers[0].resources.requests: Invalid value: "1200m": must be less than or equal to cpu limit
+* spec.containers[0].resources.requests: Invalid value: "2000Mi": must be less than or equal to memory limit
+```
+
