@@ -1103,6 +1103,183 @@ $ kubectl delete rs kubia
 replicaset.extensions "kubia" deleted
 ```
 
+## Deployment
+
+部署控制器（Deployment controller）为pods和副本集合提供了声明式更新的手段。你需要在部署对象中描述渴望状态，而部署控制器会为你以可控的速度将实际状态转换到渴望状态。
+
+你不应该直接管理属于部署对象的副本集合，所有的用例都应该通过操作部署对象来完成，如果你的用例没有被覆盖，你可以考虑在k8s的仓库开一个issue。
+
+### 创建一个部署对象
+
+下面清单文件是一个部署对象的样例，它创建一个副本集合，并启动三个nginx pod。
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.7.9
+        ports:
+        - containerPort: 80
+```
+
+创建上面这个清单文件描述的nginx-deployment对象。
+
+```sh
+$ kubectl create -f nginx-deployment.yml
+deployment.apps/nginx-deployment created
+$ kubectl get deployment
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     3            3           47s
+```
+
+### 更新部署对象
+
+部署对象的rollout被触发当且进度部署对象的pod模板被修改。
+
+通过edit命令将nginx镜像的版本修改为1.9.1。
+
+```sh
+$ kubectl edit deployment nginx-deployment
+deployment.extensions/nginx-deployment edited
+$ kubectl get rs
+NAME                          DESIRED   CURRENT   READY   AGE
+nginx-deployment-76bf4969df   3         3         3       5m8s
+nginx-deployment-779fcd779f   1         1         0       7s
+$ kubectl get deployments
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     2            3           5m41s
+```
+
+deployments的UP-TO-DATE属性表示符合最新模板的pod的数量。可以看到修改部署对象后，一个新的副本集合被创建，其被扩容到3个，而旧的副本集合被缩容到0个。
+
+部署对象保证只有固定数目的pod会为了更新而不可用，默认情况下，保证最多副本数/4的pod处于不可用状态。同时部署对象还保证最多会存在副本数*5/4的pod。
+
+```sh
+$ kubectl describe deployment
+...
+Events:
+  Type    Reason             Age    From                   Message
+  ----    ------             ----   ----                   -------
+  Normal  ScalingReplicaSet  14m    deployment-controller  Scaled up replica set nginx-deployment-76bf4969df to 3
+  Normal  ScalingReplicaSet  9m14s  deployment-controller  Scaled up replica set nginx-deployment-779fcd779f to 1
+  Normal  ScalingReplicaSet  8m35s  deployment-controller  Scaled down replica set nginx-deployment-76bf4969df to 2
+  Normal  ScalingReplicaSet  8m35s  deployment-controller  Scaled up replica set nginx-deployment-779fcd779f to 2
+  Normal  ScalingReplicaSet  8m34s  deployment-controller  Scaled down replica set nginx-deployment-76bf4969df to 1
+  Normal  ScalingReplicaSet  8m34s  deployment-controller  Scaled up replica set nginx-deployment-779fcd779f to 3
+  Normal  ScalingReplicaSet  8m33s  deployment-controller  Scaled down replica set nginx-deployment-76bf4969df to 0
+```
+
+可以看到k8s在创建扩容新的副本集合的过程穿插着对旧的副本集合缩容的过程。
+
+### Rollover
+
+每次部署控制器发现新的部署对象时，如果不存在符合的副本集合，会创建一个新的副本集合，用于启动所需数目的pod。副本集合会删除那些满足.spec.selector但是模板不等于.spec.template的pod，同时会启动使用新的模板的pod。最终新的副本集合会达到目标副本值，而旧的副本集合会被缩容到0。
+
+如果你在rollout的过程中更新了部署对象，部署对象会为每次更新创建一个新的副本集合，并跳过之前处理中的rollout，上一次rollout会被加入旧副本集合的列表中并开始缩容。
+
+### Rollback
+
+有时，你需要回滚部署对象，比如新的模板带来的pod是不稳定的。默认情况下，所有的部署对象的rollout历史都保留在系统中，因此你可以在任何时候回滚。
+
+比如你因为输出错误将镜像nginx:1.9.1写成了nginx:1.91，那么部署对象会照样为你创建一个新的副本集，但是这个副本集合无法启动任何pod，因为无法pull镜像。
+
+```sh
+$ kubectl get deployment
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     1            3           65m
+$ kubectl get rs
+NAME                          DESIRED   CURRENT   READY   AGE
+nginx-deployment-76bf4969df   0         0         0       65m
+nginx-deployment-779fcd779f   3         3         3       60m
+nginx-deployment-79dccf98ff   1         1         0       34s
+$ kubectl get pods
+NAME                                READY   STATUS             RESTARTS   AGE
+nginx-deployment-779fcd779f-js2cr   1/1     Running            0          60m
+nginx-deployment-779fcd779f-v6fmh   1/1     Running            0          60m
+nginx-deployment-779fcd779f-xsskv   1/1     Running            0          60m
+nginx-deployment-79dccf98ff-md6zt   0/1     ImagePullBackOff   0          43s
+```
+
+这时候你就需要rollback回退到之前的文档版本。
+
+```sh
+$ kubectl rollout history deployment/nginx-deployment
+deployment.extensions/nginx-deployment
+REVISION  CHANGE-CAUSE
+1         <none>
+2         <none>
+3         <none>
+```
+
+首先查看某个版本的详情。
+
+```sh
+$ kubectl rollout history deployment/nginx-deployment --revision=2
+deployment.extensions/nginx-deployment with revision #2
+Pod Template:
+  Labels:       app=nginx
+        pod-template-hash=779fcd779f
+  Containers:
+   nginx:
+    Image:      nginx:1.9.1
+    Port:       80/TCP
+    Host Port:  0/TCP
+    Environment:        <none>
+    Mounts:     <none>
+  Volumes:      <none>
+```
+
+之后回退到第2版本。
+
+```sh
+$ kubectl rollout undo deployment/nginx-deployment --to-revision=2
+deployment.extensions/nginx-deployment rolled back
+```
+
+再查看历史。
+
+```sh
+$ kubectl rollout history deployment/nginx-deployment
+deployment.extensions/nginx-deployment
+REVISION  CHANGE-CAUSE
+1         <none>
+3         <none>
+4         <none>
+```
+
+版本2消失了，变成了版本4。
+
+### 暂停和恢复
+
+在执行一次或多次更新之前你可以暂停一个部署对象，在更新完成后再恢复它。在暂停到恢复的期间，这个部署对象不会发生rollout事件。
+
+```sh
+$ kubectl rollout pause deployment/nginx-deployment
+deployment.extensions/nginx-deployment paused
+```
+
+在做出多次编辑操作后，恢复部署对象。
+
+```sh
+$ kubectl rollout resume deployment/nginx-deployment
+deployment.extensions/nginx-deployment resumed
+```
+
 ## 守护集合
 
 副本控制器和副本集合都是用于在集群中部署特定数目的副本实例。但是我们还会遇到另外一种需求，在每个节点上运行一个pod。比如你的pod是节点的资源监控器或日志收集器。
@@ -3464,6 +3641,15 @@ Autoscaler不自己收集统计数据，而是通过向Heapster发送REST请求�
 
 由于CPU使用率往往是不稳定的，在服务完全陷落之前提前对pod进行水平扩展是有意义的，比如在CPU的平均负载达到80%，但是是什么的80%呢？之前我们了解到一个pod的CPU资源有上限和下限的区分，是80%下限还是80%上限？事实上，只有下限是可以被保证的，Autoscalar会比较CPU使用量和请求量来决定CPU使用率。
 
+首先我们需要启用metrics-erver和heapster两个addons。
+
+```sh
+$ minikube addons enable metrics-server
+$ minikube addons enable heapster
+```
+
+
+
 创建一个Deployment。
 
 ```yaml
@@ -3488,3 +3674,125 @@ spec:
 ```
 
 在创建了Deployment后，要启动对它的pods的自动水平伸缩，你需要先创建一个HPA对象，并指向该Deployment。
+
+```sh
+$ kubectl autoscale deployment kubia --cpu-percent=30 --min=1 --max=5
+horizontalpodautoscaler.autoscaling/kubia autoscaled
+```
+
+上面命令创建了一个HPA对象，并将名为kubia的Deployment对象设置为目标。pod的目标CPU使用率为30%，最小副本数为1，最大副本数为5。之后Autoscaler会不断调整副本数使得CPU使用率接近30%，但是副本不会少于1，不会多于5。
+
+```sh
+$ kubectl get hpa.v2beta1.autoscaling
+NAME    REFERENCE          TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+kubia   Deployment/kubia   <unknown>/30%   1         5         3          6m14s
+$ kubectl get hpa kubia -o yaml
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  annotations:
+    autoscaling.alpha.kubernetes.io/conditions: '[{"type":"AbleToScale","status":"True","lastTransitionTime":"2019-02-27T11:14:18Z","reason":"SucceededGetScale","message":"the
+      HPA controller was able to get the target''s current scale"},{"type":"ScalingActive","status":"False","lastTransitionTime":"2019-02-27T11:14:18Z","reason":"FailedGetResourceMetric","message":"the
+      HPA was unable to compute the replica count: unable to get metrics for resource
+      cpu: unable to fetch metrics from resource metrics API: the server could not
+      find the requested resource (get pods.metrics.k8s.io)"}]'
+  creationTimestamp: "2019-02-27T11:14:03Z"
+  name: kubia
+  namespace: default
+  resourceVersion: "265501"
+  selfLink: /apis/autoscaling/v1/namespaces/default/horizontalpodautoscalers/kubia
+  uid: ca01e435-3a80-11e9-9766-080027a39588
+spec:
+  maxReplicas: 5
+  minReplicas: 1
+  scaleTargetRef:
+    apiVersion: extensions/v1beta1
+    kind: Deployment
+    name: kubia
+  targetCPUUtilizationPercentage: 30
+status:
+  currentReplicas: 3
+  desiredReplicas: 0
+```
+
+可以看到名为kubia的hpa现在的cpu使用率是未知的，这是因为我们的pod还没有接收过任何请求，这意味着他们的CPU使用率应该接近于0。你可以期望Autoscaler会自动将副本数调节到1，因为即使是1，CPU使用率依旧会低于30%。稍等片刻后，我们的Autoscaler成功收集到统计数据。
+
+```sh
+$ kubectl get hpa
+NAME    REFERENCE          TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+kubia   Deployment/kubia   0%/30%    1         5         1          66m
+$ kubectl get deployment
+NAME    READY   UP-TO-DATE   AVAILABLE   AGE
+kubia   1/1     1            1           68m
+```
+
+要让副本数自动增加，我们需要请求我们的pod。先暴露端口
+
+```sh
+$ kubectl expose deployment kubia --port=80 --target-port=8080
+```
+
+之后为我们的服务器增压。
+
+```sh
+$ kubectl run -it --rm --restart=Never loadgenerator --image=busybox -- sh -c "while true; do wget -O - -q http://kubia.default; done"
+```
+
+查看副本数目。
+
+```sh
+$ kubectl get hpa
+NAME    REFERENCE          TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+kubia   Deployment/kubia   38%/30%   1         5         2          83m
+$ kubectl get deployment
+NAME    READY   UP-TO-DATE   AVAILABLE   AGE
+kubia   2/2     2            2           84m
+```
+
+即使你的负载达到了100%，按理来说新的副本数目会是3，但是实际上改变的副本数将会是2。这是因为一次伸缩最多只能在原来的副本数上翻倍。并且在多次伸缩之间需要存在间隙，目前一次扩容仅会在上一次扩容三分钟后才能发生，而缩容拥有更长的间隙。
+
+你可以在HPA的运行期间修改目标资源消耗量。通过edit命令修改配置文件，将目标CPU消耗量设置为60%。
+
+我们可以看到基于CPU的自动伸缩是非常简单的。但是如果你打算基于内存消耗量来进行水平扩容可能就是另外一幅光景了。因为当内存不足时，你增加了副本数，但是这并不能保证老的pod会释放内存，新的pod会使用更少的内存，假如内存消耗问题不能得到改善，副本数会被不断扩大，直到达到上限，当然这不是任何人的愿望。
+
+### 基于自定义metric扩容
+
+要基于自定义metric进行扩容，k8s一开始提供的设计非常复杂，而后k8s的自动伸缩兴趣组（SIG）完全重新设计了Autoscaler。
+
+metric有三种类型：
+
+- Resource
+- Pods
+- Object
+
+Resource类型的metric意味着Autoscaler根据资源类型的统计数据来做决定，比如cpu。
+
+Pods类型的metric意味着使用任何与pod直接关联的统计数据，比如QPS，或者消息中间件中的消息数量。比如要使用QPS。
+
+```yaml
+...
+spec:
+  metrics:
+  - type: Pods
+    resource:
+      metricName: qps
+      targetAverageValue: 100
+...
+```
+
+Object类型metric意味着使用与pod不直接相关的metric，比如根据集群中的其它对象，像Ingress对象。
+
+```yaml
+...
+spec:
+  metrics:
+  - type: Object
+    resource:
+      metricName: latencyMillis
+      target:
+        apiVersion: extensions/v1beta1
+        kind: Ingress
+        name: frontend
+      targetValue: 20
+```
+
