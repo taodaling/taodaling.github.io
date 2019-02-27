@@ -3299,3 +3299,192 @@ The Pod "requests-pod-4" is invalid:
 * spec.containers[0].resources.requests: Invalid value: "2000Mi": must be less than or equal to memory limit
 ```
 
+### 设置命名空间资源上限
+
+在多租户模式下，不同的命名空间对应不同的租户，按照不同的套餐，我们提供不同的计算资源。
+
+要实现对命名空间资源进行限制，k8s为我们提供了ResourceQuota资源。在API服务器中运行着多个进场控制插件，用于校验pod是否能够创建。上一节我们聊过的LimitRanger插件就是其中之一，同时也存在着ResourceQuota插件，利用ResourceQuota资源校验pod是否会导致命名空间下资源上限超出，如果超出，就会拒绝创建pod。
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cpu-add-mem
+spec:
+  hard:
+    requests.cpu: 400m
+    requests.memory: 200Mi
+    limits.cpu: 600m
+    limits.memory: 500Mi
+```
+
+和LimitRange类似，ResourceQuota对象仅约束其所属的命名空间，并且只会影响之后创建的pod。
+
+```sh
+$ kubectl create -f cpu-and-mem.yaml
+resourcequota/cpu-add-mem created
+$ kubectl describe quota
+Name:            cpu-add-mem
+Namespace:       default
+Resource         Used  Hard
+--------         ----  ----
+limits.cpu       0     600m
+limits.memory    0     500Mi
+requests.cpu     0     400m
+requests.memory  0     200Mi
+```
+
+注意如果没有显式指定上限，那么这样的清单文件是不会被接受的，因为没有上限意味着可以任意大，这会超出limits。
+
+```sh
+$ kubectl create -f kubia-manual.yml
+Error from server (Forbidden): error when creating "kubia-manual.yml": pods "kubia-manual" is forbidden: failed quota: cpu-add-mem: must specify limits.cpu,limits.memory,requests.cpu,requests.memory
+```
+
+ResourceQuota资源爱能限制持久化存储的数量。
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: storage
+spec:
+  hard:
+    requests.storage: 500Gi #可申请存储大小
+    ssd.storageclass.storage.k8s.io/requests.storage: 300Gi #可以从存储类中动态分配存储大小
+    standard.storageclass.storage.k8s.io/requests.storage: 1Ti
+```
+
+ResourceQuota也可以限制命名空间内的pods、副本控制器、服务和其他资源的数量，可用的节点端口，公网IP。
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: objects
+spec:
+  hard:
+    pods: 10
+    replicationcontrollers: 5
+    secrets: 5
+    configmaps: 10
+    persistentvolumeclaims: 4
+    services: 5
+    services.loadbalancers: 1
+    services.nodeports: 2
+    ssd.storageclass.storage.k8s.io/persistentvolumeclaims: 2
+```
+
+### 监控pod资源使用情况
+
+合理地设置资源请求是非常重要的，如果请求设置过低，你的应用将处于饥饿状态，如果请求设置过高，那么你将投入无谓的金钱。要得到合理的请求值，你需要不断监控你的应用并持续调整。
+
+如何监控在k8s中运行的应用呢，幸运的是，kubelet已经包含了一个名为cAdvisor的代理，它会收集每个容器的资源以及整个节点的资源消耗情况。要将整个集群中的数据集中起来，你需要运行一个额外的组件——Heapster。
+
+Heapster以pod的形式在某个节点上运行，并通过一个k8s服务暴露出静态IP地址。它会收集集群中所有来自cAdvisor的数据，并将数据在某个单独的位置暴露。
+
+我们首先要启用heapster。
+
+```sh
+$ minikube addons enable heapster
+heapster was successfully enabled
+```
+
+等待heapster收集数据后，查看节点状态。
+
+```sh
+$ kubectl top node
+NAME       CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+minikube   326m         16%    1309Mi          69%
+```
+
+上面展示了已经消耗了的节点资源。
+
+要查看每个pod使用了多少资源，你可以使用下面命令。
+
+```sh
+$ kubectl top pod --all-namespaces
+NAMESPACE     NAME                               CPU(cores)   MEMORY(bytes)
+default       requests-pod-1                     201m         0Mi
+kube-system   coredns-86c58d9df4-dv8d9           1m           7Mi
+kube-system   coredns-86c58d9df4-trkd7           1m           7Mi
+kube-system   etcd-minikube                      13m          55Mi
+kube-system   heapster-8mrx4                     0m           18Mi
+kube-system   influxdb-grafana-n5mzl             0m           24Mi
+kube-system   kube-addon-manager-minikube        16m          3Mi
+kube-system   kube-apiserver-minikube            23m          231Mi
+kube-system   kube-controller-manager-minikube   18m          52Mi
+kube-system   kube-proxy-57rh9                   2m           8Mi
+kube-system   kube-scheduler-minikube            6m           10Mi
+kube-system   storage-provisioner                0m           24Mi
+```
+
+要记住，heapster仅会保存和显示近期的数据。如果你需要保存长期的统计数据，那么需要借助额外的工具，比如用InfluxDB存储静态数据，用Grafana展示和分析数据。
+
+由于我们使用的是minikube，InfluxDB和Grafana会在我们启用Heapster时被自动以pod的形式部署。
+
+```sh
+$ minikube service monitoring-grafana -n kube-system
+```
+
+## 自动伸缩pods和集群节点
+
+我们可以通过修改replicas字段来手动调整副本集合的副本数，但是要通过人工调整副本数来应对突然的访问增加并不是一个理想的方式。
+
+幸运的是，k8s能监控你的pods，并在检测到CPU使用率或其他统计数据增加时自动进行伸缩。在云架构上，它甚至能在没有节点可以调度时增加额外的节点。
+
+### 水平pod自动伸缩
+
+pod的水平自动伸缩由水平控制器（Horizontal Controller）完成，你可以通过创建一个水平PodAutoscaler（HorizontalPodAutoscaler，HPA）来启用并配置HC。
+
+HC会周期性检查pod的统计数据，并计算需要的副本数目以符合统计数据的要求，并调整副本数量。自动调整的流程可以总结为三步：
+
+- 获取所有管理的pod的统计数据
+- 计算符合统计数据需要的pod数目
+- 更新replicas字段
+
+Autoscaler不自己收集统计数据，而是通过向Heapster发送REST请求来获取统计数据，这也预示着Heapster必须运行起来才行。
+
+一旦Autoscaler获得了自己管理的所有资源下的pod的统计数据，它可以利用这些统计数据来计算出副本的合适数目。它会试图让每个副本的平均统计数据尽可能接近配置好的目标值。
+
+如果Autoscaler仅考虑一个参数，那么计算需要副本数非常简单，只需要加总统计数据并除去HPA上定义的目标值后四舍五入取整即可。但是实际过程会更加复杂一些，因为必须保证及时在统计数据非常不稳定的情况下副本数也不会不断波动。
+
+但是当考虑多个参数时，比如CPU使用率和QPS，计算也不会变的复杂。Autoscaler会为每个参数计算需要副本数并取较大值。
+
+自动伸缩的最后一步是更新副本集合、副本控制器的副本数。之后由副本集合负责伸缩实际的副本。自动伸缩控制器会通过Scale子资源修改被伸缩资源的replicas字段。这允许Autoscaler与被伸缩资源解耦。这也意味着Autoscaler可以操作任何可伸缩资源，只需要API服务器为它暴露Scale子资源，API服务器已经为下列资源暴露了Scale子资源：
+
+- Deployments
+- ReplicaSets
+- ReplicationControllers
+- StatefulSetes
+
+![](https://raw.githubusercontent.com/taodaling/assets/master/images/2019-01-30-kubernetes/HPA process.PNG)
+
+可能你最想基于pod中进程的CPU的消耗量来自动伸缩，假设有多个pod提供了同一个服务，当他们的CPU使用率达到100%，很显然他们无法处理更多的请求，因此需要进行垂直伸缩（增加CPU资源）或水平伸缩（增加pod副本数量）。我们现在仅考虑水平伸缩。
+
+由于CPU使用率往往是不稳定的，在服务完全陷落之前提前对pod进行水平扩展是有意义的，比如在CPU的平均负载达到80%，但是是什么的80%呢？之前我们了解到一个pod的CPU资源有上限和下限的区分，是80%下限还是80%上限？事实上，只有下限是可以被保证的，Autoscalar会比较CPU使用量和请求量来决定CPU使用率。
+
+创建一个Deployment。
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: kubia
+spec:
+  replicas: 3
+  template:
+    metadata:
+      name: kubia
+      labels:
+        app: kubia
+    spec:
+      containers:
+      - image: luksa/kubia:v1
+        name: nodejs
+        resources:
+          requests:
+            cpu: 100m
+```
+
+在创建了Deployment后，要启动对它的pods的自动水平伸缩，你需要先创建一个HPA对象，并指向该Deployment。
