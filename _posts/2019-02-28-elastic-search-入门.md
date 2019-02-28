@@ -140,7 +140,7 @@ networks:
 
 要检查集群健康，我们需要使用_cat接口。
 
-```sh
+```http
 $ GET /_cat/health?v
 -----------------------------
 epoch      timestamp cluster        status node.total node.data shards pri relo init unassign pending_tasks max_task_wait_time active_shards_percent
@@ -157,7 +157,7 @@ epoch      timestamp cluster        status node.total node.data shards pri relo 
 
 查看我们两个节点的状态。
 
-```sh
+```http
 GET /_cat/nodes?v
 -----------------------------
 ip         heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
@@ -170,7 +170,7 @@ ip         heap.percent ram.percent cpu load_1m load_5m load_15m node.role maste
 
 列举索引使用的也会_cat接口。
 
-```sh
+```http
 GET /_cat/indices?v
 -----------------------------
 health status index uuid pri rep docs.count docs.deleted store.size pri.store.size
@@ -182,7 +182,7 @@ health status index uuid pri rep docs.count docs.deleted store.size pri.store.si
 
 接下来我们创建一个名为customer的索引，使用pretty在请求的后面，要求ES返回格式化的JSON响应。
 
-```sh
+```http
 PUT /customer?pretty
 -----------------------------
 #! Deprecation: the default number of shards will change from [5] to [1] in 7.0.0; if you wish to continue using the default of [5] shards, you must manage this on the create index request or with an index template
@@ -195,7 +195,7 @@ PUT /customer?pretty
 
 接下来列出索引。
 
-```sh
+```http
 $ GET /_cat/indices?v
 -----------------------------
 health status index    uuid                   pri rep docs.count docs.deleted store.size pri.store.size
@@ -208,7 +208,7 @@ rep字段表示副本数目为1。
 
 接下来我们向之前创建的customer索引加入点文档。
 
-```sh
+```http
 PUT /customer/_doc/1?pretty
 {
   "name": "John Doe"
@@ -236,7 +236,7 @@ PUT /customer/_doc/1?pretty
 
 接下来让我们通过外部ID查询文档。
 
-```sh
+```http
 GET /customer/_doc/1?pretty
 -----------------------------
 {
@@ -253,7 +253,7 @@ GET /customer/_doc/1?pretty
 
 found指示再索引中确实找到了对应的文档，而_source中存放找到的文档。
 
-```sh
+```http
 GET /_cat/indices?v
 -----------------------------
 health status index    uuid                   pri rep docs.count docs.deleted store.size pri.store.size
@@ -266,7 +266,7 @@ customer索引的文档数变成了1。
 
 接下来让我们删除刚创建的索引。
 
-```sh
+```http
 DELETE /customer?pretty
 -----------------------------
 {
@@ -278,7 +278,7 @@ acknowledged字段表示删除操作被接受。现在我们又回到了开始�
 
 让我们回顾一下至今对索引的操作。
 
-```sh
+```http
 PUT /customer
 PUT /customer/_doc/1
 {
@@ -290,7 +290,7 @@ DELETE /customer
 
 可以总结出访问ES中的数据的模式。
 
-```sh
+```http
 <HTTP Verb> /<Index>/<Endpoint>/<ID>
 ```
 
@@ -302,7 +302,7 @@ ES在近线性时间内提供数据操作和搜索能力。默认情况下，你
 
 我们之前已经了解过如果索引一个文档。
 
-```sh
+```http
 PUT /customer/_doc/1?pretty
 {
   "name": "John Doe"
@@ -326,7 +326,7 @@ PUT /customer/_doc/1?pretty
 
 如果我们再次以不同（或相同）的文档执行上面命令时，ES会替换ID为1的文档的内容。
 
-```sh
+```http
 PUT /customer/_doc/1?pretty
 {
   "name": "Jane Doe"
@@ -352,7 +352,7 @@ PUT /customer/_doc/1?pretty
 
 如果我们在提交文档时不指定id，那么ES会为这个文档生成一个随机ID，这个ID会在结果的_id字段返回。
 
-```sh
+```http
 POST /customer/_doc?pretty
 {
   "name": "Jane Doe"
@@ -378,7 +378,7 @@ POST /customer/_doc?pretty
 
 除了完整替换文档外，我们还可以选择更新部分文档。注意ES并不会在后台执行原址更新，每次更新文档，都会删除旧的文档并索引新的文档。
 
-```sh
+```http
 POST /customer/_doc/1/_update?pretty
 {
   "doc": { "name": "Jane Doe" }
@@ -400,7 +400,7 @@ POST /customer/_doc/1/_update?pretty
 
 我们不仅可以修改已有字段，还能增加新的字段。
 
-```sh
+```http
 POST /customer/_doc/1/_update?pretty
 {
   "doc": { "name": "Jane Doe", "age": 20 }
@@ -422,7 +422,7 @@ POST /customer/_doc/1/_update?pretty
 
 我们还能通过一个简单脚本来实现更新。
 
-```sh
+```http
 POST /customer/_doc/1/_update?pretty
 {
   "script" : "ctx._source.age += 5"
@@ -450,7 +450,7 @@ POST /customer/_doc/1/_update?pretty
 
 删除一个稳定是相当直接的。
 
-```sh
+```http
 DELETE /customer/_doc/2?pretty
 -----------------------------
 {
@@ -475,7 +475,7 @@ DELETE /customer/_doc/2?pretty
 
 创建两个文档。
 
-```sh
+```http
 POST /customer/_doc/_bulk?pretty
 {"index":{"_id":"1"}}
 {"name": "John Doe" }
@@ -526,7 +526,7 @@ POST /customer/_doc/_bulk?pretty
 
 下面这个命令更新了文档1并删除文档2。
 
-```sh
+```http
 POST /customer/_doc/_bulk?pretty
 {"update":{"_id":"1"}}
 {"doc": { "name": "John Doe becomes Jane Doe" } }
@@ -608,8 +608,790 @@ Bulk接口不会因为一个操作失败而停止，它会执行完所有的操�
 
 为了演示，我们还是会展示如何使用URI的方式提交搜索参数，但是之后我们将统一使用body的方式提交参数。
 
- ```sh
+ ```http
 GET /bank/_search?q=*&sort=account_number:asc&pretty
 -----------------------------
+{
+  "took": 234,
+  "timed_out": false,
+  "_shards": {
+    "total": 5,
+    "successful": 5,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 1000,
+    "max_score": null,
+    "hits": [
+      {
+        "_index": "bank",
+        "_type": "_doc",
+        "_id": "0",
+        "_score": null,
+        "_source": {
+          "account_number": 0,
+          "balance": 16623,
+          "firstname": "Bradshaw",
+          "lastname": "Mckenzie",
+          "age": 29,
+          "gender": "F",
+          "address": "244 Columbus Place",
+          "employer": "Euron",
+          "email": "bradshawmckenzie@euron.com",
+          "city": "Hobucken",
+          "state": "CO"
+        },
+        "sort": [
+          0
+        ]
+      },
+ 	  ...
+    ]
+  }
+}
  ```
+
+来了解一下URI的含义，bank指定在bank索引下，_search端点指定搜索操作，q=\*参数要求ES匹配索引中存储的所有文档。sort=account_number:asc参数指示按照account_numbre字段升序排序结果。pretty参数告诉ES返回格式化后的JSON结果。
+
+除了hits中的请求结果外，还包含了下面部分的内容：
+
+- took - ES执行搜索花费的毫秒数
+- timed_out - 告诉我们搜索是否超时
+- _shards - 告诉我们有搜索了多少分片，以及多少分片搜索成功，多少失败。
+- hits - 搜索结果
+- hits.total - 匹配我们搜索条件的文档总数
+- hits.hits - 实际结果数组（默认前10条）
+- hits.sort - 用于排序的字段（如果按分数排序则为空）
+- hits._score和max_score - 目前不用管
+
+将上面URI形式的查询请求转换为更清晰的body格式。
+
+```http
+GET /bank/_search
+{
+  "query": { "match_all": {} },
+  "sort": [
+    { "account_number": "asc" }
+  ]
+}
+```
+
+理解一旦你取回搜索结果，ES就完成了请求并且不会再服务器端保存任何维护结果的资源是非常重要的。这与其他诸如SQL的带状态的平台不同，在这些平台中，你可以获取结果的子集，之后可以通过不断请求服务器去获取剩下的内容。
+
+## 介绍查询语言
+
+ES提供了JSON风格的DSL，你可以通过使用DSL来执行查询。这种DSL称为Query DSL。这种语言非常易于理解，在初见时可能会感觉非常复杂，但是学习它的最好的方法是通过几个简单的案例。
+
+回到我们最后的例子：
+
+```http
+GET /bank/_search
+{
+  "query": { "match_all": {} },
+  "sort": [
+    { "account_number": "asc" }
+  ]
+}
+```
+
+query部分指定了查询条件，match_all部分会不做任何过滤。除了query部分，我们还可以传递其它参数来影响搜索结果，上面我们传递了sort，下面我们将使用size。
+
+```http
+GET /bank/_search
+{
+  "query": { "match_all": {} },
+  "size": 1
+}
+```
+
+size指定最多能返回几条结果，默认值是10。
+
+下面例子返回第10~19条记录。
+
+```http
+GET /bank/_search
+{
+  "query": { "match_all": {} },
+  "from": 10,
+  "size": 10
+}
+```
+
+下面请求我们按照balance进行逆向排序。
+
+```http
+GET /bank/_search
+{
+  "query": { "match_all": {} },
+  "sort": { "balance": { "order": "desc" } }
+}
+```
+
+## 执行搜索
+
+我们已经了解了一些基础的查询参数，让我们在Query DSL上再深挖一些。让我们看一下返回的文档中的字段，默认情况下，整个JSON文档都会作为_source被返回。如果你不需要整个文档，我们可以仅请求原始文档的部分的字段。
+
+下面这个案例仅返回文档的account_number和balance字段。
+
+```http
+GET /bank/_search
+{
+  "query": { "match_all": {} },
+  "_source": ["account_number", "balance"]
+}
+```
+
+接下来让我们关注query部分，之前我们已经看到match_all请求可以用来匹配所有文档，接下来让我们介绍match查询。match查询可以认为是对于单个基础字段的过滤。
+
+下面的例子返回account_numer为20的文档。
+
+```http
+GET /bank/_search
+{
+  "query": { "match": { "account_number": 20 } }
+}
+```
+
+下面的例子返回所有地址中包含单词（term）"mill"的文档。
+
+```http
+GET /bank/_search
+{
+  "query": { "match": { "address": "mill" } }
+}
+```
+
+下面的例子返回所有地址中包含单词"mill"或"lane"的文档。
+
+```http
+GET /bank/_search
+{
+  "query": { "match": { "address": "mill lane" } }
+}
+```
+
+下面例子使用了match的变种match_phrase来搜索所有地中中包含短语"mill lane"的文档。
+
+```http
+GET /bank/_search
+{
+  "query": { "match_phrase": { "address": "mill lane" } }
+}
+```
+
+下面让我们介绍bool查询。bool查询允许我们将一些较小的查询通过布尔逻辑组合成一个更大的查询。
+
+下面的例子使用must以逻辑且组合了两个match查询搜索所有地址包含"mill"和"lane"的文档。
+
+```http
+GET /bank/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "match": { "address": "mill" } },
+        { "match": { "address": "lane" } }
+      ]
+    }
+  }
+}
+```
+
+上面的must条件会对所有的子条件进行且运算。因此要通过must过滤，必须通过它的所有子条件。
+
+相反，下面的例子通过should以逻辑或组合了两个match条件，返回地址包含"mill"或"lane"的文档。
+
+```http
+GET /bank/_search
+{
+  "query": {
+    "bool": {
+      "should": [
+        { "match": { "address": "mill" } },
+        { "match": { "address": "lane" } }
+      ]
+    }
+  }
+}
+```
+
+下面例子通过逻辑或后取反组合了两个查询条件，返回所有地址既不包含"mill"也不包含"lane"的文档。
+
+```http
+GET /bank/_search
+{
+  "query": {
+    "bool": {
+      "must_not": [
+        { "match": { "address": "mill" } },
+        { "match": { "address": "lane" } }
+      ]
+    }
+  }
+}
+```
+
+bool下面可以有多个子查询，它们以且运算组合。下面例子返回所有40岁但是不居住在ID州的文档。
+
+```http
+GET /bank/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "match": { "age": "40" } }
+      ],
+      "must_not": [
+        { "match": { "state": "ID" } }
+      ]
+    }
+  }
+}
+```
+
+你可以将bool作为普通的过滤器任意组合。比如下面我们搜索返回所有40岁但是不居住在ID州的文档和
+
+所有地址包含"mill"和"lane"的文档的并集。
+
+```http
+GET /bank/_search?pretty
+{
+    "query": {
+        "bool": {
+            "should": [
+                {
+                    "bool": {
+                        "must": [{
+                            "match": {
+                                "age": "40"
+                            }
+                        }],
+                        "must_not": [{
+                            "match": {
+                                "state": "ID"
+                            }
+                        }]
+                    }
+                },
+                {
+                    "bool": {
+                        "must": [{
+                                "match": {
+                                    "address": "mill"
+                                }
+                            },
+                            {
+                                "match": {
+                                    "address": "lane"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    }
+}
+```
+
+## 执行过滤器
+
+之前的章节，我们跳过了文档分数的细节（对应结果中的_score字段）。文档分数是一个数值，用于评估文档和搜索条件的匹配程度。分数越高，文档越接近条件，分数越低，文档越偏离条件。
+
+但是查询不一定会生成分数，尤其条件仅用来过滤文档集合。ES会监测到这些场景，并自动优化执行的查询，以避免计算无用的分数。
+
+我们之前介绍的bool查询，也支持filter条件，允许我们使用一个查询来约束返回的文档，而不必修改分数的计算方式。作为一个样例，让我们介绍range查询，允许我们通过一个范围来过滤文档。这个通常用于数值或日期字段。
+
+这个例子使用一个bool查询来返回所有拥有20000到30000之间余额的文档。
+
+```http
+GET /bank/_search
+{
+  "query": {
+    "bool": {
+      "must": { "match_all": {} },
+      "filter": {
+        "range": {
+          "balance": {
+            "gte": 20000,
+            "lte": 30000
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+仔细分析上面的请求，bool查询包含一个match_all查询，以及一个过滤器。
+
+## 执行聚合器
+
+聚合器提供了分组和从数据中提取统计数据的能力。可以简单地将聚合器视作SQL的GROUP BY和SQL的聚合函数。ES可以在执行搜索并返回hits的同时返回聚合结果。这是非常有限的方式，你可以在执行搜索的同时指定多个聚合器，并一同作为结果接受，通过更加紧密和简单的接口避免了网络的往返。
+
+作为开始，下面这个样例对所有账户通过state进行分组，返回人口量前10的州。
+
+```http
+GET /bank/_search
+{
+  "size": 0,
+  "aggs": {
+    "group_by_state": {
+      "terms": {
+        "field": "state.keyword"
+      }
+    }
+  }
+}
+-----------------------------
+{
+  "took": 59,
+  "timed_out": false,
+  "_shards": {
+    "total": 5,
+    "successful": 5,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 1000,
+    "max_score": 0,
+    "hits": []
+  },
+  "aggregations": {
+    "group_by_state": {
+      "doc_count_error_upper_bound": 20,
+      "sum_other_doc_count": 770,
+      "buckets": [
+        {
+          "key": "ID",
+          "doc_count": 27
+        },
+        {
+          "key": "TX",
+          "doc_count": 27
+        },
+        {
+          "key": "AL",
+          "doc_count": 25
+        },
+        {
+          "key": "MD",
+          "doc_count": 25
+        },
+        {
+          "key": "TN",
+          "doc_count": 23
+        },
+        {
+          "key": "MA",
+          "doc_count": 21
+        },
+        {
+          "key": "NC",
+          "doc_count": 21
+        },
+        {
+          "key": "ND",
+          "doc_count": 21
+        },
+        {
+          "key": "ME",
+          "doc_count": 20
+        },
+        {
+          "key": "MO",
+          "doc_count": 20
+        }
+      ]
+    }
+  }
+}
+```
+
+等价的SQL大概是
+
+```sql
+SELECT state, COUNT(*) FROM bank GROUP BY state ORDER BY COUNT(*) DESC LIMIT 10;
+```
+
+注意我们的请求中将size设置为了0，禁止服务器返回hits信息。
+
+在上面案例的基础上，下面这个案例计算每个州的平均余额，并仅返平均人数最多的10个州。
+
+```http
+GET /bank/_search
+{
+  "size": 0,
+  "aggs": {
+    "group_by_state": {
+      "terms": {
+        "field": "state.keyword"
+      },
+      "aggs": {
+        "average_balance": {
+          "avg": {
+            "field": "balance"
+          }
+        }
+      }
+    }
+  }
+}
+-----------------------------
+{
+  "took": 73,
+  "timed_out": false,
+  "_shards": {
+    "total": 5,
+    "successful": 5,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 1000,
+    "max_score": 0,
+    "hits": []
+  },
+  "aggregations": {
+    "group_by_state": {
+      "doc_count_error_upper_bound": 20,
+      "sum_other_doc_count": 770,
+      "buckets": [
+        {
+          "key": "ID",
+          "doc_count": 27,
+          "average_balance": {
+            "value": 24368.777777777777
+          }
+        },
+        {
+          "key": "TX",
+          "doc_count": 27,
+          "average_balance": {
+            "value": 27462.925925925927
+          }
+        },
+        {
+          "key": "AL",
+          "doc_count": 25,
+          "average_balance": {
+            "value": 25739.56
+          }
+        },
+        {
+          "key": "MD",
+          "doc_count": 25,
+          "average_balance": {
+            "value": 24963.52
+          }
+        },
+        {
+          "key": "TN",
+          "doc_count": 23,
+          "average_balance": {
+            "value": 29796.782608695652
+          }
+        },
+        {
+          "key": "MA",
+          "doc_count": 21,
+          "average_balance": {
+            "value": 29726.47619047619
+          }
+        },
+        {
+          "key": "NC",
+          "doc_count": 21,
+          "average_balance": {
+            "value": 26785.428571428572
+          }
+        },
+        {
+          "key": "ND",
+          "doc_count": 21,
+          "average_balance": {
+            "value": 26303.333333333332
+          }
+        },
+        {
+          "key": "ME",
+          "doc_count": 20,
+          "average_balance": {
+            "value": 19575.05
+          }
+        },
+        {
+          "key": "MO",
+          "doc_count": 20,
+          "average_balance": {
+            "value": 24151.8
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+注意到上面我们再group_by_state聚合中嵌套了average_balance聚合器，这是所有聚合器的一种通用模式。你可以任意嵌套聚合器以从数据中提取摘要。
+
+在上一个例子的基础上，接下来让我们将聚合信息按照平均余额降序排序。
+
+```http
+GET /bank/_search
+{
+  "size": 0,
+  "aggs": {
+    "group_by_state": {
+      "terms": {
+        "field": "state.keyword",
+        "order": {
+          "average_balance": "desc"
+        }
+      },
+      "aggs": {
+        "average_balance": {
+          "avg": {
+            "field": "balance"
+          }
+        }
+      }
+    }
+  }
+}
+-----------------------------
+{
+  "took": 84,
+  "timed_out": false,
+  "_shards": {
+    "total": 5,
+    "successful": 5,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 1000,
+    "max_score": 0,
+    "hits": []
+  },
+  "aggregations": {
+    "group_by_state": {
+      "doc_count_error_upper_bound": -1,
+      "sum_other_doc_count": 918,
+      "buckets": [
+        {
+          "key": "AL",
+          "doc_count": 6,
+          "average_balance": {
+            "value": 41418.166666666664
+          }
+        },
+        {
+          "key": "SC",
+          "doc_count": 1,
+          "average_balance": {
+            "value": 40019
+          }
+        },
+        {
+          "key": "AZ",
+          "doc_count": 10,
+          "average_balance": {
+            "value": 36847.4
+          }
+        },
+        {
+          "key": "VA",
+          "doc_count": 13,
+          "average_balance": {
+            "value": 35418.846153846156
+          }
+        },
+        {
+          "key": "DE",
+          "doc_count": 8,
+          "average_balance": {
+            "value": 35135.375
+          }
+        },
+        {
+          "key": "WA",
+          "doc_count": 7,
+          "average_balance": {
+            "value": 34787.142857142855
+          }
+        },
+        {
+          "key": "ME",
+          "doc_count": 3,
+          "average_balance": {
+            "value": 34539.666666666664
+          }
+        },
+        {
+          "key": "OK",
+          "doc_count": 9,
+          "average_balance": {
+            "value": 34529.77777777778
+          }
+        },
+        {
+          "key": "CO",
+          "doc_count": 13,
+          "average_balance": {
+            "value": 33379.769230769234
+          }
+        },
+        {
+          "key": "MI",
+          "doc_count": 12,
+          "average_balance": {
+            "value": 32905.916666666664
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+下面的案例按照年龄段（20-29，30-39，40-49）进行分组，之后按照性别分组，最终计算平均余额。
+
+```http
+GET /bank/_search
+{
+  "size": 0,
+  "aggs": {
+    "group_by_age": {
+      "range": {
+        "field": "age",
+        "ranges": [
+          {
+            "from": 20,
+            "to": 30
+          },
+          {
+            "from": 30,
+            "to": 40
+          },
+          {
+            "from": 40,
+            "to": 50
+          }
+        ]
+      },
+      "aggs": {
+        "group_by_gender": {
+          "terms": {
+            "field": "gender.keyword"
+          },
+          "aggs": {
+            "average_balance": {
+              "avg": {
+                "field": "balance"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+-----------------------------
+{
+  "took": 84,
+  "timed_out": false,
+  "_shards": {
+    "total": 5,
+    "successful": 5,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": 1000,
+    "max_score": 0,
+    "hits": []
+  },
+  "aggregations": {
+    "group_by_state": {
+      "doc_count_error_upper_bound": -1,
+      "sum_other_doc_count": 918,
+      "buckets": [
+        {
+          "key": "AL",
+          "doc_count": 6,
+          "average_balance": {
+            "value": 41418.166666666664
+          }
+        },
+        {
+          "key": "SC",
+          "doc_count": 1,
+          "average_balance": {
+            "value": 40019
+          }
+        },
+        {
+          "key": "AZ",
+          "doc_count": 10,
+          "average_balance": {
+            "value": 36847.4
+          }
+        },
+        {
+          "key": "VA",
+          "doc_count": 13,
+          "average_balance": {
+            "value": 35418.846153846156
+          }
+        },
+        {
+          "key": "DE",
+          "doc_count": 8,
+          "average_balance": {
+            "value": 35135.375
+          }
+        },
+        {
+          "key": "WA",
+          "doc_count": 7,
+          "average_balance": {
+            "value": 34787.142857142855
+          }
+        },
+        {
+          "key": "ME",
+          "doc_count": 3,
+          "average_balance": {
+            "value": 34539.666666666664
+          }
+        },
+        {
+          "key": "OK",
+          "doc_count": 9,
+          "average_balance": {
+            "value": 34529.77777777778
+          }
+        },
+        {
+          "key": "CO",
+          "doc_count": 13,
+          "average_balance": {
+            "value": 33379.769230769234
+          }
+        },
+        {
+          "key": "MI",
+          "doc_count": 12,
+          "average_balance": {
+            "value": 32905.916666666664
+          }
+        }
+      ]
+    }
+  }
+}
+```
 
