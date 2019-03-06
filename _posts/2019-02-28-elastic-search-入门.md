@@ -1394,4 +1394,3 @@ GET /bank/_search
   }
 }
 ```
-
