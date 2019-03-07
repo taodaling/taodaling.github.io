@@ -266,6 +266,22 @@ public class AsyncService{
 }
 ```
 
+异步任务除了void类型返回值外还可以返回Future类型的返回值。
+
+```java
+@Service
+@EnableAsync
+public class AsyncService{
+    @Async
+    public Future<Boolean> invoke(){
+        ...
+        return new AsyncResult(true);
+    }
+}
+```
+
+之所以必须返回Future类型是因为方法相对调用者来说是异步执行的，这意味着方法必须有能力立即返回结果。但是结果必须在异步方法执行完成后才能获得，因此Spring只能向调用者提供一个Future对象。当然方法的结果对于调用者是预先知道的，因此方法的结果也必须是Future类型对象。当然Spring真正返回的Future并不是我们方法中返回的Future，而是它的一个代理。
+
 Spring允许你提供自己的线程池。默认情况下，Spring会按照下面顺序进行装配：
 
 - 如果上下文存在唯一的org.springframework.core.task.TaskExecutor类型的bean，那么就使用它。
