@@ -13,7 +13,7 @@ layout: post
 
 
 $$
-x^2=1\rightarrow (x-1)(x+1)=0\rightarrow x=1\or x=n-1(mod\phantom{1}n)
+x^2=1\rightarrow (x-1)(x+1)=0\rightarrow x=1\lor x=n-1(mod\phantom{1}n)
 $$
 
 
