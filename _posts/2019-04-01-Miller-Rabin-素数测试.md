@@ -44,7 +44,7 @@ boolean mr(int n, int s)
     }
     for(int i = 0; i < s; i++)
     {
-        int x = RANDOM(1, n - 1);
+        int x = RANDOM(2, n - 1);
         if(!mr0(x, p))
         {
             return false;
