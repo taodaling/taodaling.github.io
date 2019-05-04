@@ -19,6 +19,23 @@ Hierholzer算法用于在连通图寻找欧拉迹，其流程非常简单。
 
 从一个可能的起点出发，进行深度优先搜索，但是每次沿着辅助边从某个顶点移动到另外一个顶点的时候，都需要删除这个辅助边。如果没有可移动的路径，则将所在结点加入到栈中，并返回。
 
+
+
+```java
+void dfs(Node node, Deque trace){
+	while(!node.edges.isEmpty())
+	{
+		Node next = node.edges.removeLast();
+		dfs(next, trace);
+	}
+	trace.addLast(node);
+}
+```
+
+
+
+
+
 最后得到的栈中保存的就是整个欧拉迹中的顶点。
 
 
