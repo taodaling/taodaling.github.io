@@ -23,11 +23,11 @@ sass:
 # Site Data
 url: # the base hostname & protocol for your site, e.g. http://example.com
 baseurl: # the subpath of your site, e.g. /blog
-title: Taodaling's blog!
+title: Daltao's blog!
 description: "My blog to share"
 keywords: 'jekyll,theme,gem-based,blog'
 author:
-  name: Taodaling
+  name: Daltao
   job_title: Developer
   location: China
   email: taodaling@gmail.com
@@ -47,7 +47,7 @@ author:
     - name: vk
       url:
 home:
-  section1: <h1>Taodaling's blog!</h1>
+  section1: <h1>Daltao's blog!</h1>
   section2: <h2>Somewhere to share</h2>
   section3: <div class="social-links"><a class="ico-github btn" href="https://github.com/taodaling" title="View on GitHub"></a></div>
 blog:
