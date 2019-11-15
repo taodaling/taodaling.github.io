@@ -60,3 +60,13 @@ $$
 - 边权非1且非2且非3
 
 只有在没有边的情况下存在，如果没有边，所有顶点的着色都有两种可能。
+
+# CF1257F
+
+**题意**
+
+[https://codeforces.com/contest/1257/problem/F](https://codeforces.com/contest/1257/problem/F)
+
+**题解**
+
+就是Meet in middle的裸题。将结果分成前15位和后15位，分别处理，之后用哈希表实现线性查找即可。
