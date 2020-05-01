@@ -1141,3 +1141,25 @@ $$
 最少的操作次数，等价于留下的数最多。我们可以记$dp(i,j,k)$表示用$k$代表的集合中的数，剩下$i$个数，其这$i$个数中最靠右的数为$j$，问最大的数最小可能是多少。
 
 那么就是一个简单的DP，时间复杂度为$O(n^23^n)$，常数大概可以优化到$\frac{1}{4}$或者更小。加一堆剪枝应该能过。
+
+# codeforces 870D
+
+**题意**
+
+[https://codeforces.com/contest/870/problem/D](https://codeforces.com/contest/870/problem/D)
+
+**题解**
+
+我们可以提前预处理出$p_0$和$b_i$的亦或和，同时处理出$p_i$和$b_0$的亦或和，这样总共$2n$次请求。
+
+接下来，我们可以得出任意两个数的亦或和：
+
+$$
+p_i\oplus p_j=(p_i\oplus b_0) \oplus (p_j\oplus b_0)\\
+p_i\oplus b_j=(p_i\oplus b_0) \oplus (p_0\oplus b_j)\oplus (p_0\oplus b_0)\\
+b_i\oplus b_j=(p_0\oplus b_i) \oplus (p_0\oplus b_j)
+$$
+
+之后由于$n\leq 5000$，我们可以直接暴力枚举$p_0$，由于$p_0$一旦确定，其余数也都确定了。我们需要校验$p$和$b$是否是合法排列其互逆。
+
+总的时间复杂度为$O(n^2)$。
