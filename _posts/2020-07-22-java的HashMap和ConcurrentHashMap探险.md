@@ -625,3 +625,4 @@ layout: post
 ```
 
 可以发现remove是不会缩小表的。
+
