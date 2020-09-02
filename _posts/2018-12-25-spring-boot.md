@@ -666,7 +666,7 @@ public class Example {
 	public static class Serializer extends JsonSerializer<SomeObject> {
 		// ...
 	}
-
+平日嗯
 	public static class Deserializer extends JsonDeserializer<SomeObject> {
 		// ...
 	}
