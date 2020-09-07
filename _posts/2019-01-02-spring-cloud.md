@@ -5,6 +5,7 @@ layout: post
 
 - Table
 {:toc}
+
 # 服务治理：Spring Cloud Eureka
 
 Spring Cloud Eureka是Spring Cloud Netflix微服务套件中的一部分，它基于Netflix Eureka做了二次封装，主要负责完成微服务架构中的服务治理功能。
