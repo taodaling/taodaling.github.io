@@ -173,7 +173,7 @@ public class HelloController {
 
 Config是Spring Cloud中的分布式配置管理中心。
 
-# 单机部署
+## 单机部署
 
 先改maven文件。
 
@@ -368,3 +368,99 @@ greet: "Hello world"
 接下来我们在不关闭两个服务的情况下修改`config-client-dev.yml`文件。修改后访问路径`localhost:8861/config-client/dev`会直接给出最新的信息，但是`localhost:10001/hello/greet`的结果不会改变，我们必须手工让配置中心通知其它项目。具体就是通过POST方式访问路径`localhost:8861/actuator/bus-refresh`，之后重新访问`localhost:10001/hello/greet`可以看到最新的更改。
 
 可以发现Spring在kafka中自动创建了一个名字叫做`springCloudBus`的topic，里面有一些类型为`RefreshRemoteApplicationEvent`的消息。
+
+# Sleth
+
+## 单机部署
+
+### Zipkin
+
+去官网下载zipkin。
+
+之后我们通过下面命令来启动Zipkin。我这边使用ES作为存储底层，用KAFKA接收消息。
+
+```sh
+$ java -jar zipkin.jar --STORAGE_TYPE=elasticsearch --ES_HOSTS=localhost:9200 --ES_HTTP_LOGGING=BASIC --KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
+```
+
+### 项目
+
+创建一个名字叫做`sleth-client`的项目。
+
+下面是maven文件：
+
+```xml
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-bus-kafka</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-zipkin</artifactId>
+        </dependency>
+```
+
+下面是`application.yml`文件：
+
+
+```yml
+server:
+  port: 10001
+
+spring:
+  application:
+    name: sleth-client
+  cloud:
+    stream:
+      kafka:
+        binder:
+          zk-nodes: localhost:2181
+          brokers: localhost:9092
+  zipkin:
+    sender:
+      type: kafka #使用kafka作为发送消息的方式
+  sleuth:
+    sampler:
+      probability: 1.0 # 采用频率，1表示100%
+
+eureka:
+  client:
+    healthcheck:
+      enabled: true
+    service-url:
+      defaultZone: http://peer1:8761/eureka/
+```
+
+之后创建一个简单的WEB应用：
+
+```java
+@SpringBootApplication
+@EnableDiscoveryClient
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+
+```
+
+创建一个简单的控制器：
+
+```java
+@RequestMapping("/hello")
+@RestController
+@RefreshScope
+public class HelloController {
+
+    @RequestMapping("/date")
+    public String getDate() {
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+    }
+}
+```
+
+之后先访问路径`localhost:10001/hello/date`，再去看看zipkin的页面是否出现了变化。
