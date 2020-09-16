@@ -464,3 +464,265 @@ public class HelloController {
 ```
 
 之后先访问路径`localhost:10001/hello/date`，再去看看zipkin的页面是否出现了变化。
+
+# Security
+
+## 帐号密码登录
+
+下面我们构建一个简单的项目，来演示如何利用Security实现登录操作。
+
+创建一个maven项目，加入下面的依赖：
+
+```xml
+    <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-security</artifactId>
+    </dependency>
+```
+
+之后我们需要实现`UserDetailsService`和`UserDetails`两个接口。前者向Spring暴露通过用户名查找用户信息的接口，后者则是一般用户信息的接口。
+
+下面是`UserDetailsService`的实现类，其直接从数据库中查找用户，如果没有找到就抛出`UsernameNotFoundException`异常。
+
+```java
+@Service
+public class UserService implements UserDetailsService {
+    @Autowired
+    private UserMapper userMapper;
+
+    @Override
+    public UserDetails loadUserByUsername(String s) throws UsernameNotFoundException {
+        UserExample example = new UserExample();
+        example.or().andDeletedIdEqualTo(0).andUsernameEqualTo(s);
+        User user = userMapper.selectByExample(example)
+                .stream().findFirst().orElseThrow(() -> new UsernameNotFoundException(s));
+
+        return UserDTO.builder().username(user.getUsername())
+                .password(user.getPassword())
+                .authorities(Collections.singletonList(new SimpleGrantedAuthority("known")))
+                .build();
+    }
+}
+```
+
+下面是`UserDetails`的实现类：
+
+```java
+@Builder
+public class UserDTO implements UserDetails {
+    private String username;
+    private String password;
+    private List<? extends GrantedAuthority> authorities;
+
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return authorities;
+    }
+
+    @Override
+    public String getPassword() {
+        return password;
+    }
+
+    @Override
+    public String getUsername() {
+        return username;
+    }
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+}
+```
+
+接下来我们还需要写一些配置类：
+
+```java
+@Configuration
+@EnableWebSecurity
+public class WebSecurityConfig extends WebSecurityConfigurerAdapter {
+    @Autowired
+    private UserService userService;
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+        auth.userDetailsService(userService).passwordEncoder(passwordEncoder());
+    }
+
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http
+                .logout().logoutUrl("/logout").logoutSuccessUrl("/")
+                .and().formLogin().permitAll()
+                .and().authorizeRequests().antMatchers("/user/test1").authenticated()
+                .and().authorizeRequests().antMatchers("/user/test2").permitAll()
+                .and().csrf().disable();
+    }
+
+    @Bean
+    @Override
+    public AuthenticationManager authenticationManagerBean() throws Exception {
+        return super.authenticationManagerBean();
+    }
+}
+```
+
+之后我们增加一个控制器：
+
+```java
+@RestController
+@RequestMapping("/user")
+public class HelloController {
+    //通过Principal获得当前的登录用户
+    @RequestMapping("/test1")
+    public String test1(Principal p) {
+        return "love and peace for " + p.getName();
+    }
+
+    @RequestMapping("/test2")
+    public String test2() {
+        return "for freedom";
+    }
+}
+```
+
+之后调用`/user/test2`可以发现是正常访问的，但是调用`/user/test1`会跳转到登录页面。登录完成后，`/user/test1`也可以正常访问了。
+
+登录完成后，可以发现服务器的响应头中`Set-Cookie: JSESSIONID=76B0C326E036B12F2D946F64CE00F1D1; Path=/; HttpOnly`字段被设置。即默认的Spring Security会使用Cookie+Session的模式来保存用户的登录信息。
+
+## OAuth 2
+
+下面我们演示如何利用Spring Security实现OAuth 2登录。
+
+注意这部分内容是基于`帐号密码登录`项目继续完善的。
+
+首先在加入下面的maven依赖：
+
+```xml
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-oauth2</artifactId>
+        </dependency>
+```
+
+之后我们需要增加一个配置类，配置客户端信息：
+
+```java
+@Configuration
+@EnableAuthorizationServer
+public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdapter {
+    @Autowired
+    private AuthenticationManager authenticationManager;
+    @Autowired
+    private RedisConnectionFactory redisConnectionFactory;
+
+    //使用redis存储我们分配的token、code等信息
+    @Bean
+    public TokenStore redisTokenStore(){
+        return new RedisTokenStore(redisConnectionFactory);
+    }
+
+    /**
+     * 配置客户端详细信息
+     *
+     * @param clients
+     * @throws Exception
+     */
+    @Override
+    public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
+        clients.inMemory()
+                //客户端ID
+                .withClient("zcs")
+                .secret(new BCryptPasswordEncoder().encode("zcs"))
+                //权限范围
+                .scopes("app")
+                //授权码模式
+                .authorizedGrantTypes("authorization_code")
+                //随便写
+                .redirectUris("https://www.baidu.com");
+    }
+
+    @Override
+    public void configure(AuthorizationServerEndpointsConfigurer endpoints) throws Exception {
+        endpoints.tokenStore(redisTokenStore())
+                .authenticationManager(authenticationManager);
+    }
+
+    @Override
+    public void configure(AuthorizationServerSecurityConfigurer security) throws Exception {
+        security
+                // 开启/oauth/token_key验证端口无权限访问
+                .tokenKeyAccess("permitAll()")
+                // 开启/oauth/check_token验证端口认证权限访问
+                .checkTokenAccess("isAuthenticated()")
+                .allowFormAuthenticationForClients();
+    }
+}
+```
+
+之后还需要增加一个`ResourceServerConfigurerAdapter`的子类，里面要声明资源服务器的权限。
+
+```java
+@Configuration
+@EnableResourceServer
+public class ResourceServerConfig extends ResourceServerConfigurerAdapter {
+    @Override
+    public void configure(HttpSecurity http) throws Exception {
+        http
+                .antMatcher("/user/**")
+                .authorizeRequests()
+                .antMatchers("/user/test1").authenticated()
+                .antMatchers("/user/test2").permitAll();
+    }
+}
+```
+
+之后启动服务器后。访问路径`/user/test2`，是可以正常访问的，但是访问`/user/test1`则会提示没有权限。
+
+下面我们模拟oauth过程。首先访问`/oauth/authorize?client_id=zcs&response_type=code&redirect_uri=https://www.baidu.com`，这时候会跳转到登录页面，输入授权用户的帐号密码后。会跳转到`https://www.baidu.com/?code=JsVFpm`这样一个地址。其中`code`就是授权用户的授权码。
+
+利用POST请求访问路径`/oauth/token?grant_type=authorization_code&redirect_uri=https://www.baidu.com&client_id=zcs&client_secret=zcs&code=sKe4o9`。下面是成功响应内容
+
+```json
+{
+    "access_token": "913cb0d0-67ff-418c-8bef-1cb498f103a8",
+    "token_type": "bearer",
+    "expires_in": 36517,
+    "scope": "app"
+}
+```
+
+其中包含了`access_token`。我们之后可以使用这个token去访问资源服务器中的资源。下面尝试访问原来没有权限访问的`/user/test1`，结果如下：
+
+```sh
+$ curl --location --request GET 'localhost:10002/user/test1' \
+--header 'Authorization: Bearer 913cb0d0-67ff-418c-8bef-1cb498f103a8'
+
+love and peace for admin
+```
+
+# 参考资料
+
+- [https://juejin.im/post/6844903958427746317](https://juejin.im/post/6844903958427746317)
