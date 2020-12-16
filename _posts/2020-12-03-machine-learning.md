@@ -60,6 +60,8 @@ $$
 h(x)=\mathrm{sigmoid}(\theta^Tx)=\frac{1}{1+e^{-\theta^T x}}
 $$
 
+这里顺带一提，$\mathrm{sigmoid}$函数的导数特别简单，$\mathrm{sigmoid}'(z)=\mathrm{sigmoid}(z)(1-\mathrm{sigmoid}(z))$。
+
 其中$h(x)$可以理解为对于输入$x$，其输出为$1$的概率，即$h(x)=P(y=1\mid x;\theta)$。
 
 考虑到$h$产生的是$\[0,1\]$之间的连续值，但是分类问题需要的是离散值，因此我们可以在$h(x)\geq 0.5$的时候输出$1$，否则输出$0$（输出较大可能的项）。考虑到$\mathrm{sigmoid}$函数的特性，可以发现输出$1$当且仅当$\theta^Tx\geq 0$。再考虑到线性函数的模型，其等高线$\theta^Tx=0$对应一个非规则轮廓，如果$x$落在非规则轮廓内部输出$0$，外部输出$1$，这条等高线称为决策边界。
@@ -190,57 +192,47 @@ $$
 
 在做正则化的时候我们同样不考虑那些增加的常数$1$神经元的输出的参数。
 
-偏导数的计算方法：
+偏导数可以通过链式求导的方式计算：
+
+下面的计算我们仅考虑一个测试用例，多个测试用例只需要计算出单个测试用例的部分，之后加总即可。同时我们忽略系数$\frac{1}{m}$和正则化项的影响。定义$\delta^{(l)}$表示$\frac{\mathrm{d}J}{\mathrm{d}a^{(l)}}$，可以发现有$\delta^{(l)}=a^{(L)}-y$。对于其余项：
 
 $$
-\frac{\partial}{\partial \Theta_{i,j}^{(l)}}J(\Theta)=a_j^{(l)}\delta_i^{(l+1)}
+\begin{aligned}
+\delta^{(l)}&=\frac{\mathrm{d}J}{\mathrm{d}a^{(l)}}\\
+&=\frac{\mathrm{d}J}{\mathrm{d}a^{(l+1)}}\frac{\mathrm{d}a^{(l+1)}}{\mathrm{d}z^{(l+1)}}\frac{\mathrm{d}z^{(l+1)}}{\mathrm{d}a^{(l)}}\\
+&=\delta^{(l+1)}\mathrm{diag}(a^{(l+1)}.*(1-a^{(l+1)}))\Theta^{(l)}\\
+&=(\delta^{(l+1)}.*a^{(l+1)}.*(1-a^{(l+1)}))\Theta^{(l)}
+\end{aligned}
 $$
 
-而误差的计算方法如下：
+其中$\mathrm{diag}(A)$表示把向量$A$作为对角线元素组成一个新的方阵，而$A.*B$表示按位置乘，即$(A.*B)_{i,j}=A_{i,j}B_{i,j}$。
+
+接下来定义$\Delta^{(l)}_{i,j}=\frac{\mathrm{d}J}{\mathrm{d}\Theta^{(l)}_{i,j}}$。可以发现
 
 $$
-\delta^{(l)}=
-\left\{
-\begin{array}{ll}
-a_j^{(L)}-y_j&\text{if }l=L\\
-(\Theta^{(l)})^T\delta^{(l+1)}.*g'(z^{(l)})&\text{if }1<l< L
-\end{array}
-\right.
+\begin{aligned}
+\Delta^{(l)}_{i,j}&=\frac{\mathrm{d}J}{\mathrm{d}\Theta^{(l)}_{i,j}}\\
+&=\frac{\mathrm{d}J}{\mathrm{d}a^{(l+1)}}\frac{\mathrm{d}a^{(l+1)}}{\mathrm{d}z^{(l+1)}}\frac{\mathrm{d}z^{(l+1)}}{\mathrm{d}\Theta^{(l)}_{i,j}}\\
+&=\delta^{(l+1)}\mathrm{diag}(a^{(l+1)}.*(1-a^{(l+1)}))[i:a_j^{(l)}]\\
+&=(\delta^{(l+1)}.*a^{(l+1)}.*(1-a^{(l+1)}))_i\cdot a_j^{(l)}
+\end{aligned}
 $$
 
-其中$A.*B$表示矩阵$A$和矩阵$B$逐单元格相乘，即$(A.*B)_{i,j}=A_{i,j}B_{i,j}$。
+其中$\[i:a_j^{(l)}\]$是个向量，只有第$i$行一个非零值$a_j^{(l)}$。
 
-下面展示$g'$的求法：
-
-$$
-g'(z^{(l)})=a^{(l)}.*(1-a^{(l)})
-$$
-
-## 反向传播算法
-
-反向传播算法主要用于计算神经网络惩罚函数的偏导数。
-
-初始化$L$个元素$\Delta^{(1)},\ldots,\Delta^{(L-1)}:=0$。
-
-之后对每个训练集中元素进行遍历，假设现在遍历的是第$i$个。
-
-1. 设置$a^{(1)}=x^{(i)}$。
-2. 计算$a^{(2)},\ldots,a^{(L)}$
-3. 反向计算$\delta^{(L)},\ldots,\delta^{(2)}$
-4. 遍历所有的$l=1,2,\ldots,L-1$:
-   1. $\Delta^{(l)}:=\Delta^{(l)}+\delta^{(l+1)}(a^{(l)})^T$
-
-之后有：
+最后加入我们久违的系数和正则化项后，得到：
 
 $$
-\frac{\partial}{\partial \Theta_{i,j}^{(l)}}J(\Theta)=
+\frac{\mathrm{d}J}{\mathrm{d}\Theta^{(l)}_{i,j}}=
 \left\{
 \begin{array}{ll}
 \frac{1}{m}\Delta^{(l)}_{i,j} &\text{if }j=0\\
-\frac{1}{m}\Delta^{(l)}_{i,j}+\lambda\Theta^{(l)}_{i,j} &\text{if }j\neq 0
+\frac{1}{m}\Delta^{(l)}_{i,j}+\frac{\lambda}{m}\Theta^{(l)}_{i,j} &\text{otherwise}
 \end{array}
 \right.
 $$
+
+神经网络的惩罚函数并不是一个凸函数，因此可能存在多个局部极值点。
 
 ## 随机初始化
 
