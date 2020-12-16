@@ -205,9 +205,9 @@ $$
 \end{aligned}
 $$
 
-其中$\mathrm{diag}(A)$表示把向量$A$作为对角线元素组成一个新的方阵，而$A.\*B$表示按位置乘，即$(A.\*B)_{i,j}=A_{i,j}B_{i,j}$。
+其中$\mathrm{diag}(A)$表示把向量$A$作为对角线元素组成一个新的方阵，而$A.\*B$表示按位置乘，即$(A.\*B)\_{i,j}=A\_{i,j}B\_{i,j}$。
 
-接下来定义$\Delta^{(l)}_{i,j}=\frac{\mathrm{d}J}{\mathrm{d}\Theta^{(l)}_{i,j}}$。可以发现
+接下来定义$\Delta^{(l)}\_{i,j}=\frac{\mathrm{d}J}{\mathrm{d}\Theta^{(l)}\_{i,j}}$。可以发现
 
 $$
 \begin{aligned}
