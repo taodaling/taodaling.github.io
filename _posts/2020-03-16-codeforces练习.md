@@ -1026,12 +1026,14 @@ $$
 记$f(x,n)$表示n个顶点能组成多少树，其中一个顶点是由x个顶点合并得到的。
 
 $$
-f(x,n)=\sum_{d=1}^{n-1}{n-2\choose d-1}(n-1)^{(n-2)-(d-1)}x^d\\
-=x\sum_{d=1}^{n-1}{n-2\choose d-1}(n-1)^{(n-2)-(d-1)}x^{d-1}\\
-=x\sum_{d=0}^{n-2}{n-2\choose d}(n-1)^{(n-2)-d}x^{d}\\
-=x(n-1)^{n-2}\sum_{d=0}^{n-2}{n-2\choose d}(\frac{x}{n-1})^d\\
-=x(n-1)^{n-2}(1+\frac{x}{n-1})^{n-2}\\
-=x(n-1+x)^{n-2}
+\begin{aligned}
+f(x,n)&=\sum_{d=1}^{n-1}{n-2\choose d-1}(n-1)^{(n-2)-(d-1)}x^d\\
+&=x\sum_{d=1}^{n-1}{n-2\choose d-1}(n-1)^{(n-2)-(d-1)}x^{d-1}\\
+&=x\sum_{d=0}^{n-2}{n-2\choose d}(n-1)^{(n-2)-d}x^{d}\\
+&=x(n-1)^{n-2}\sum_{d=0}^{n-2}{n-2\choose d}(\frac{x}{n-1})^d\\
+&=x(n-1)^{n-2}(1+\frac{x}{n-1})^{n-2}\\
+&=x(n-1+x)^{n-2}
+\end{aligned}
 $$
 
 套上去就可以得出结果了。时间复杂度是$O(n\log_2n)$。
