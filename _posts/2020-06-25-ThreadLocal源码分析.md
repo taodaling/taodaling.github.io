@@ -3,6 +3,8 @@ categories: code
 layout: post
 ---
 
+# ThreadLocal
+
 上周我们领导和我们分享了一些Java的内存溢出问题，其中涉及到ThreadLocal引用对象内存溢出的情况。但是因为当时没读过源码，听得一知半解，这里读一下ThreadLocal的源码好了。本文的源码是来自OpenJDK 1.8中的内容。
 
 首先什么是ThreadLocal，ThreadLocal可以作为一个线程独有的对象的一个容器，每个线程在通过`get`方法访问ThreadLocal内部包装的对象时得到结果可能是不同的。
@@ -513,3 +515,98 @@ static class ThreadLocalMap {
 
 可以看出ThreadLocalMap的代码是比较复杂的，原因是为了处理弱引用。我们来考虑有哪些情况下会发生内存泄露。由于ThreadLocalMap的唯一引用落在Thread对象中，因此只要线程未退出（比如是线程池复用的线程），这时候它的threadLocals变量也不会被清理，导致threadLocals中的所有键值对都会被保留。上面键值对的清理仅发生在你访问它的时候（甚至可能仅清理一小部分）。由于是启发式的清理过程，因此可能有些放threadLocals中的对象可能会永远都不被清理。
 
+# InheritableThreadLocal
+
+如果我们希望子线程能使用父线程的ThreadLocal对象，该怎么办。JDK里面提供了`InheritableThreadLocal`类型。它的代码非常简单
+
+```java
+public class InheritableThreadLocal<T> extends ThreadLocal<T> {
+    /**
+     * Computes the child's initial value for this inheritable thread-local
+     * variable as a function of the parent's value at the time the child
+     * thread is created.  This method is called from within the parent
+     * thread before the child is started.
+     * <p>
+     * This method merely returns its input argument, and should be overridden
+     * if a different behavior is desired.
+     *
+     * @param parentValue the parent thread's value
+     * @return the child thread's initial value
+     */
+    protected T childValue(T parentValue) {
+        return parentValue;
+    }
+
+    /**
+    * 这里覆盖掉getMap。
+    * 由于一个InheritableThreadLocal可能出现在多个ThreadLocalMap*中，
+    * 因此我们不能在InheritableThreadLocal变量中存储自己所在的ThreadLocalMap，
+    * 必须实时获取。
+    */
+    ThreadLocalMap getMap(Thread t) {
+       return t.inheritableThreadLocals;
+    }
+
+    /**
+     * Create the map associated with a ThreadLocal.
+     *
+     * @param t the current thread
+     * @param firstValue value for the initial entry of the table.
+     */
+    void createMap(Thread t, T firstValue) {
+        t.inheritableThreadLocals = new ThreadLocalMap(this, firstValue);
+    }
+}
+```
+
+可以发现它使用了线程中的另外一个变量`inheritableThreadLocals`。看看这个变量是怎么初始化和创建的。
+
+```java
+public
+class Thread implements Runnable {
+    private void init(ThreadGroup g, Runnable target, String name,
+                      long stackSize, AccessControlContext acc,
+                      boolean inheritThreadLocals) {
+        ...
+        Thread parent = currentThread();
+        ...
+        if (inheritThreadLocals && parent.inheritableThreadLocals != null)
+            this.inheritableThreadLocals =
+                ThreadLocal.createInheritedMap(parent.inheritableThreadLocals);
+
+    }
+}
+```
+
+可以发现线程在初始化的时候，如果发现父线程（负责调用初始化代码的线程）如果用需要被继承的ThreadLocal对象，那么就会创建属于自己的`inheritableThreadLocals`变量并初始化。初始化的代码很简单：
+
+```java
+public
+class Thread implements Runnable {
+    private ThreadLocalMap(ThreadLocalMap parentMap) {
+            Entry[] parentTable = parentMap.table;
+            int len = parentTable.length;
+            setThreshold(len);
+            table = new Entry[len];
+            //遍历parentMap，并将所有键值对插入到新建的ThreadLocalMap中
+            for (int j = 0; j < len; j++) {
+                Entry e = parentTable[j];
+                if (e != null) {
+                    @SuppressWarnings("unchecked")
+                    ThreadLocal<Object> key = (ThreadLocal<Object>) e.get();
+                    if (key != null) {
+                        Object value = key.childValue(e.value);
+                        Entry c = new Entry(key, value);
+                        int h = key.threadLocalHashCode & (len - 1);
+                        while (table[h] != null)
+                            h = nextIndex(h, len);
+                        table[h] = c;
+                        size++;
+                    }
+                }
+            }
+        }
+}
+```
+
+可以发现`inheritableThreadLocals`仅在初始化的时候会复制所有父线程的`inheritableThreadLocals`，之后二者就是独立运行了，向一者的插入删除操作不会影响另外一个线程的变量，但是它们其中保存的`InheritableThreadLocal`变量是相同的。
