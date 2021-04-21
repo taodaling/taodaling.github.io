@@ -6,7 +6,7 @@ layout: post
 - Table
 {:toc}
 
-# 源码
+# ThreadPoolExecutor源码
 
 `ThreadPoolExecutor`中有若干个构造器，它们都转发到一个完整的构造器中（相当于提供一些默认参数）。
 
@@ -619,5 +619,177 @@ public class FutureTask<V> implements RunnableFuture<V> {
     //一个钩子
     protected void done() { }
 }
+```
+
+# ScheduledThreadPoolExecutor源码
+
+`ThreadPoolExecutor`允许我们提交任务，并在将来的某个时间点被执行。但是如果我们希望延迟一个小时候再执行某个任务呢，这该怎么做。
+
+`ScheduledThreadPoolExecutor`提供了一种解决方案。我们来看下它怎么做的。
+
+`ScheduledThreadPoolExecutor`继承自`ThreadPoolExecutor`并复用了很多逻辑。但是它的构造器并不能像`ThreadPoolExecutor`那样支持那么多的参数。
+
+```java
+public class ScheduledThreadPoolExecutor
+        extends ThreadPoolExecutor
+        implements ScheduledExecutorService {
+    public ScheduledThreadPoolExecutor(int corePoolSize,
+                                       ThreadFactory threadFactory,
+                                       RejectedExecutionHandler handler) {
+        //这里最大线程数为无穷，且存活时间是0（这是为了尽可能及时的把延时任务开始执行）
+        //同时必须使用DelayedWorkQueue队列
+        super(corePoolSize, Integer.MAX_VALUE, 0, NANOSECONDS,
+              new DelayedWorkQueue(), threadFactory, handler);
+    }
+}
+```
+
+它的核心方法是下面这个：
+
+```java
+    public ScheduledFuture<?> schedule(Runnable command,
+                                       long delay,
+                                       TimeUnit unit) {
+        if (command == null || unit == null)
+            throw new NullPointerException();
+        //这边会把要执行的任务，以及触发时间合并到同一个对象中
+        RunnableScheduledFuture<?> t = decorateTask(command,
+            new ScheduledFutureTask<Void>(command, null,
+                                          triggerTime(delay, unit)));
+        //加入到队列中 
+        delayedExecute(t);
+        return t;
+    }
+```
+
+而`delayedExecute`的逻辑非常简单，只是取到队列后，把任务加入到队列中。
+
+```java
+    private void delayedExecute(RunnableScheduledFuture<?> task) {
+        if (isShutdown())
+            reject(task);
+        else {
+            super.getQueue().add(task);
+            if (isShutdown() &&
+                !canRunInCurrentRunState(task.isPeriodic()) &&
+                remove(task))
+                task.cancel(false);
+            else
+                ensurePrestart();
+        }
+    }
+```
+
+所以核心的逻辑是在`DelayedWorkQueue`中的。
+
+```java
+    static class DelayedWorkQueue extends AbstractQueue<Runnable>
+        implements BlockingQueue<Runnable>{
+            
+        public boolean add(Runnable e) {
+            return offer(e);
+        }
+        public boolean offer(Runnable x) {
+            if (x == null)
+                throw new NullPointerException();
+            RunnableScheduledFuture<?> e = (RunnableScheduledFuture<?>)x;
+            final ReentrantLock lock = this.lock;
+            //这里加了锁，所以后面的部分内容是线程安全的
+            lock.lock();
+            try {
+                int i = size;
+                if (i >= queue.length)
+                    grow();
+                size = i + 1;
+                if (i == 0) {
+                    queue[0] = e;
+                    setIndex(e, 0);
+                } else {
+                    //经典的siftUp，在优先队列中也出现过了
+                    siftUp(i, e);
+                }
+                if (queue[0] == e) {
+                    leader = null;
+                    available.signal();
+                }
+            } finally {
+                lock.unlock();
+            }
+            return true;
+        }
+
+        private void siftUp(int k, RunnableScheduledFuture<?> key) {
+            while (k > 0) {
+                int parent = (k - 1) >>> 1;
+                RunnableScheduledFuture<?> e = queue[parent];
+                if (key.compareTo(e) >= 0)
+                    break;
+                queue[k] = e;
+                setIndex(e, k);
+                k = parent;
+            }
+            queue[k] = key;
+            setIndex(key, k);
+        }
+    }
+```
+
+可以看出`DelayedWorkQueue`实际上就是一个用并发锁保证线程安全的优先队列而已。
+
+那么如果我们希望周期性的执行一些任务该怎么办。
+
+```java
+    public ScheduledFuture<?> scheduleAtFixedRate(Runnable command,
+                                                  long initialDelay,
+                                                  long period,
+                                                  TimeUnit unit) {
+        if (command == null || unit == null)
+            throw new NullPointerException();
+        if (period <= 0)
+            throw new IllegalArgumentException();
+        //这里是和不带period的唯一区别，就是额外传了period这个字段
+        ScheduledFutureTask<Void> sft =
+            new ScheduledFutureTask<Void>(command,
+                                          null,
+                                          triggerTime(initialDelay, unit),
+                                          unit.toNanos(period));
+        RunnableScheduledFuture<Void> t = decorateTask(command, sft);
+        sft.outerTask = t;
+        delayedExecute(t);
+        return t;
+    }
+```
+
+看一下具体的调度的代码：
+
+```java
+    private class ScheduledFutureTask<V>
+            extends FutureTask<V> implements RunnableScheduledFuture<V> {
+        public void run() {
+            boolean periodic = isPeriodic();
+            if (!canRunInCurrentRunState(periodic))
+                //尝试取消任务
+                cancel(false);
+            else if (!periodic)
+                //如果不是周期任务，就直接执行
+                ScheduledFutureTask.super.run();
+            //否则先执行任务，并清理future
+            else if (ScheduledFutureTask.super.runAndReset()) {
+                //最后设置下次调用的时间，以及重新投递任务
+                setNextRunTime();
+                reExecutePeriodic(outerTask);
+            }
+        }
+    }
+```
+
+其中`canRunInCurrentRunState`是调用的`ScheduledThreadPoolExecutor`中的方法，其中`continueExistingPeriodicTasksAfterShutdown`和`executeExistingDelayedTasksAfterShutdown`是线程池的两个属性，可以通过setter进行设置。
+
+```java
+    boolean canRunInCurrentRunState(boolean periodic) {
+        return isRunningOrShutdown(periodic ?
+                                   continueExistingPeriodicTasksAfterShutdown :
+                                   executeExistingDelayedTasksAfterShutdown);
+    }
 ```
 
