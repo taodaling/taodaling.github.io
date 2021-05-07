@@ -513,7 +513,7 @@ static class ThreadLocalMap {
 }
 ```
 
-可以看出ThreadLocalMap的代码是比较复杂的，原因是为了处理弱引用。我们来考虑有哪些情况下会发生内存泄露。由于ThreadLocalMap的唯一引用落在Thread对象中，因此只要线程未退出（比如是线程池复用的线程），这时候它的threadLocals变量也不会被清理，导致threadLocals中的所有键值对都会被保留。上面键值对的清理仅发生在你访问它的时候（甚至可能仅清理一小部分）。由于是启发式的清理过程，因此可能有些放threadLocals中的对象可能会永远都不被清理。
+可以看出ThreadLocalMap的代码是比较复杂的，原因是为了处理弱引用。我们来考虑有哪些情况下会发生内存泄露。由于ThreadLocalMap的唯一引用落在Thread对象中，因此只要线程未退出（比如是线程池复用的线程），这时候它的threadLocals变量也不会被清理，导致threadLocals中的所有键值对都会被保留。键值对实现了弱引用，但是弱引用的仅仅是ThreadLocal这个变量，而ThreadLocal对应的值是强引用。因此你即使将ThreadLocal设置为null也不能保证资源会被释放，而是需要调用`ThreadLocal#clear()`来手动清理资源。
 
 # InheritableThreadLocal
 
